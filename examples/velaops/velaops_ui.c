@@ -708,6 +708,55 @@ static void draw_action(uint16_t *fb, int w, int h,
   draw_text(fb, w, h, 10, 188, "修复后重新SSH取证复核", 2, COL_DIM);
 }
 
+static void draw_hwtest(uint16_t *fb, int w, int h,
+                        const velaops_hw_state_t *s)
+{
+  static const char *const names[4] =
+  {
+    "UP", "DOWN", "OK", "BACK"
+  };
+
+  char line[40];
+  int i;
+
+  fill_rect(fb, w, h, 0, 0, w, h, COL_BG);
+  fill_rect(fb, w, h, 0, 0, w, 30, COL_PANEL);
+  fill_rect(fb, w, h, 0, 30, w, 1, COL_BORDER);
+  draw_text(fb, w, h, 8, 6, "维拉哨兵", 2, COL_GREEN);
+  draw_text_right(fb, w, h, w - 8, 6, "硬件自检", 2, COL_AMBER);
+
+  snprintf(line, sizeof(line), "LED %s", s->led_on ? "亮" : "灭");
+  draw_text(fb, w, h, 10, 42, line, 2, s->led_on ? COL_GREEN : COL_DIM);
+
+  snprintf(line, sizeof(line), "蜂鸣器 %s", s->buzzer_on ? "响" : "静");
+  draw_text(fb, w, h, 160, 42, line, 2, s->buzzer_on ? COL_RED : COL_DIM);
+
+  for (i = 0; i < 4; i++)
+    {
+      int col = i % 2;
+      int row = i / 2;
+      int x = 10 + col * 155;
+      int y = 74 + row * 70;
+      uint16_t border = s->key_down[i] ? COL_GREEN : COL_BORDER;
+
+      fill_rect(fb, w, h, x, y, 145, 62, COL_PANEL);
+      fill_rect(fb, w, h, x, y, 145, 2, border);
+      fill_rect(fb, w, h, x, y + 60, 145, 2, border);
+      fill_rect(fb, w, h, x, y, 2, 62, border);
+      fill_rect(fb, w, h, x + 143, y, 2, 62, border);
+
+      draw_text(fb, w, h, x + 12, y + 8, names[i], 2,
+                s->key_down[i] ? COL_GREEN : COL_TEXT);
+
+      snprintf(line, sizeof(line), "%s %d",
+               s->key_down[i] ? "按下" : "松开", s->key_count[i]);
+      draw_text(fb, w, h, x + 12, y + 32, line, 2, COL_DIM);
+    }
+
+  draw_text_center(fb, w, h, w / 2, 220, "按键自检 长按BOOT结束", 1,
+                   COL_DIM);
+}
+
 /****************************************************************************
  * Public Functions
  ****************************************************************************/
@@ -830,5 +879,17 @@ int velaops_ui_render_prov(uint16_t *fb, int width, int height,
   fill_rect(fb, width, height, 0, height - 20, width, 1, COL_BORDER);
   draw_text_center(fb, width, height, width / 2, height - 16,
                    "保存后自动重启", 2, COL_DIM);
+  return 0;
+}
+
+int velaops_ui_render_hwtest(uint16_t *fb, int width, int height,
+                             const velaops_hw_state_t *s)
+{
+  if (fb == NULL || s == NULL || width < 320 || height < 240)
+    {
+      return -1;
+    }
+
+  draw_hwtest(fb, width, height, s);
   return 0;
 }

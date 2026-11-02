@@ -63,4 +63,15 @@ int velaops_ui_render_prov(uint16_t *fb, int width, int height,
                            const char *ssid, const char *pass,
                            const char *url, const char *pin);
 
+typedef struct
+{
+  int led_on;
+  int buzzer_on;
+  int key_down[4];
+  int key_count[4];
+} velaops_hw_state_t;
+
+int velaops_ui_render_hwtest(uint16_t *fb, int width, int height,
+                             const velaops_hw_state_t *state);
+
 #endif /* VELAOPS_UI_H */

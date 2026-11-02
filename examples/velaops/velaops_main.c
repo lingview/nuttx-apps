@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/boardctl.h>
@@ -96,6 +97,204 @@ static int lcd_flush(int fd, const struct fb_videoinfo_s *vi,
     }
 
   return 0;
+}
+
+/****************************************************************************
+ * Hardware self-test
+ ****************************************************************************/
+
+#define HWTEST_BOOT_DEV "/dev/gpio1"
+
+/* Implemented in the esp32s3-eye board GPIO driver.  The keys, LED and
+ * buzzer are driven directly: registering extra /dev/gpio devices breaks
+ * the Wi-Fi data path on this board.
+ */
+
+extern int board_hwtest_gpio_init(void);
+extern int board_hwtest_gpio_read(int id);
+extern void board_hwtest_gpio_write(int id, int value);
+
+static uint32_t hw_ms(void)
+{
+  struct timespec ts;
+
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+static void hw_fill(uint16_t *fb, int w, int h, uint16_t color)
+{
+  int i;
+
+  for (i = 0; i < w * h; i++)
+    {
+      fb[i] = color;
+    }
+}
+
+static int hwtest_run(void)
+{
+  static const uint16_t bars[5] =
+  {
+    0xf800, 0x07e0, 0x001f, 0xffff, 0x0000
+  };
+
+  struct fb_videoinfo_s vi;
+  uint16_t *fb = NULL;
+  velaops_hw_state_t st;
+  bool level;
+  uint32_t change_ms[4];
+  uint32_t buzz_until = 0;
+  uint32_t next_render = 0;
+  uint32_t boot_since = 0;
+  uint32_t start;
+  uint32_t now;
+  int boot = -1;
+  int fd;
+  int i;
+
+  fd = lcd_open(&vi, &fb);
+  if (fd < 0)
+    {
+      return EXIT_FAILURE;
+    }
+
+  printf("hwtest: lcd %ux%u\n", vi.xres, vi.yres);
+
+  for (i = 0; i < 5; i++)
+    {
+      hw_fill(fb, vi.xres, vi.yres, bars[i]);
+      lcd_flush(fd, &vi, fb);
+      usleep(350000);
+    }
+
+  if (board_hwtest_gpio_init() != OK)
+    {
+      printf("hwtest: gpio init failed\n");
+      free(fb);
+      close(fd);
+      return EXIT_FAILURE;
+    }
+
+  boot = open(HWTEST_BOOT_DEV, O_RDONLY);
+  printf("hwtest: gpio ready boot=%d\n", boot);
+
+  for (i = 0; i < 4; i++)
+    {
+      printf("hwtest: key%d level=%d\n", i + 1,
+             board_hwtest_gpio_read(i));
+    }
+
+  /* Startup beeps; the buzzer is active high. */
+
+  board_hwtest_gpio_write(1, false);
+  board_hwtest_gpio_write(1, true);
+  usleep(120000);
+  board_hwtest_gpio_write(1, false);
+  usleep(100000);
+  board_hwtest_gpio_write(1, true);
+  usleep(120000);
+  board_hwtest_gpio_write(1, false);
+
+  memset(&st, 0, sizeof(st));
+  start = hw_ms();
+
+  for (i = 0; i < 4; i++)
+    {
+      change_ms[i] = start;
+    }
+
+  for (;;)
+    {
+      bool beep;
+
+      now = hw_ms();
+
+      st.led_on = ((now - start) / 500) & 1;
+      board_hwtest_gpio_write(0, st.led_on != 0);
+
+      for (i = 0; i < 4; i++)
+        {
+          bool pressed = (board_hwtest_gpio_read(i) == 0);
+
+          if (pressed != (st.key_down[i] != 0))
+            {
+              if (now - change_ms[i] >= 30)
+                {
+                  change_ms[i] = now;
+                  st.key_down[i] = pressed;
+
+                  if (pressed)
+                    {
+                      st.key_count[i]++;
+                      printf("hwtest: key %d pressed (count %d)\n",
+                             i + 1, st.key_count[i]);
+
+                      buzz_until = now + 90;
+                    }
+                }
+            }
+          else
+            {
+              change_ms[i] = now;
+            }
+        }
+
+      beep = (buzz_until != 0 && now < buzz_until);
+      st.buzzer_on = beep ? 1 : 0;
+
+      board_hwtest_gpio_write(1, beep ? true : false);
+
+      if (buzz_until != 0 && now >= buzz_until)
+        {
+          buzz_until = 0;
+        }
+
+      if (boot >= 0)
+        {
+          level = true;
+          ioctl(boot, GPIOC_READ, (unsigned long)(uintptr_t)&level);
+
+          if (!level)
+            {
+              if (boot_since == 0)
+                {
+                  boot_since = now;
+                }
+              else if (now - boot_since >= 2000)
+                {
+                  break;
+                }
+            }
+          else
+            {
+              boot_since = 0;
+            }
+        }
+
+      if (now >= next_render)
+        {
+          velaops_ui_render_hwtest(fb, vi.xres, vi.yres, &st);
+          lcd_flush(fd, &vi, fb);
+          next_render = now + 100;
+        }
+
+      usleep(20000);
+    }
+
+  board_hwtest_gpio_write(1, false);
+  board_hwtest_gpio_write(0, false);
+
+  if (boot >= 0)
+    {
+      close(boot);
+    }
+
+  free(fb);
+  close(fd);
+
+  printf("hwtest: done\n");
+  return EXIT_SUCCESS;
 }
 
 static void demo_state(velaops_ui_state_t *s)
@@ -683,6 +882,7 @@ int main(int argc, FAR char *argv[])
              "[services] [ports]\n"
              "       velaops run <host> <port> <user> <pass> "
              "[services] [ports] [repair] [secs]\n"
+             "       velaops hwtest\n"
              "       velaops store load | save <text> | set <key> <value> "
              "| del <key> | clear\n");
       return EXIT_FAILURE;
@@ -860,6 +1060,14 @@ int main(int argc, FAR char *argv[])
 
   if (strcmp(argv[1], "boot") == 0)
     {
+      static char bmode[16];
+
+      if (velaops_conf_get("boot_mode", bmode, sizeof(bmode)) == 0 &&
+          strcmp(bmode, "hwtest") == 0)
+        {
+          return hwtest_run();
+        }
+
       static char conf_ssid[64];
       static char conf_wpass[96];
       static char conf_host[64];
