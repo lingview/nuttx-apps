@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <pthread.h>
 #include <time.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -115,6 +116,7 @@ static int lcd_flush(int fd, const struct fb_videoinfo_s *vi,
 extern int board_hwtest_gpio_init(void);
 extern int board_hwtest_gpio_read(int id);
 extern void board_hwtest_gpio_write(int id, int value);
+extern void board_hwtest_key_drive(int id, int ms);
 
 static volatile int g_stop;
 
@@ -132,6 +134,70 @@ static uint32_t hw_ms(void)
 
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+static volatile int g_key_short[4];
+static volatile int g_key_long_ok;
+static volatile int g_key_thread_stop;
+
+static FAR void *key_thread(FAR void *arg)
+{
+  bool down[4] = { false, false, false, false };
+  uint32_t change[4];
+  uint32_t start[4];
+  int lng[4] = { 0, 0, 0, 0 };
+  uint32_t now = hw_ms();
+  int i;
+
+  (void)arg;
+
+  for (i = 0; i < 4; i++)
+    {
+      change[i] = now;
+      start[i] = now;
+    }
+
+  while (!g_key_thread_stop && !g_stop)
+    {
+      now = hw_ms();
+
+      for (i = 0; i < 4; i++)
+        {
+          bool key = board_hwtest_gpio_read(i) == 0;
+
+          if (key != down[i])
+            {
+              if (now - change[i] >= 30)
+                {
+                  change[i] = now;
+                  down[i] = key;
+
+                  if (key)
+                    {
+                      start[i] = now;
+                      lng[i] = 0;
+                    }
+                  else if (now - start[i] < 1000)
+                    {
+                      g_key_short[i]++;
+                    }
+                }
+            }
+          else if (key && !lng[i] && now - start[i] >= 2000)
+            {
+              lng[i] = 1;
+
+              if (i == 2)
+                {
+                  g_key_long_ok++;
+                }
+            }
+        }
+
+      usleep(20000);
+    }
+
+  return NULL;
 }
 
 static void hw_fill(uint16_t *fb, int w, int h, uint16_t color)
@@ -159,6 +225,7 @@ static int hwtest_run(void)
   uint32_t buzz_until = 0;
   uint32_t next_render = 0;
   uint32_t boot_since = 0;
+  uint32_t ok_hold = 0;
   uint32_t start;
   uint32_t now;
   int boot = -1;
@@ -265,6 +332,20 @@ static int hwtest_run(void)
       st.buzzer_on = beep ? 1 : 0;
 
       board_hwtest_gpio_write(1, beep ? true : false);
+
+      if (board_hwtest_gpio_read(2) == 0)
+        {
+          ok_hold += 20;
+
+          if (ok_hold >= 2000)
+            {
+              break;
+            }
+        }
+      else
+        {
+          ok_hold = 0;
+        }
 
       if (buzz_until != 0 && now >= buzz_until)
         {
@@ -1092,6 +1173,16 @@ int main(int argc, FAR char *argv[])
 
   printf("velaops: build %s%c", VELAOPS_BUILD, 10);
 
+  if (strcmp(argv[1], "keydrive") == 0)
+    {
+      int id = argc > 2 ? atoi(argv[2]) : 0;
+      int ms = argc > 3 ? atoi(argv[3]) : 200;
+
+      board_hwtest_key_drive(id, ms);
+      printf("velaops: keydrive %d %dms%c", id, ms, 10);
+      return EXIT_SUCCESS;
+    }
+
   velaops_ssh_prealloc();
   velaops_llm_prealloc();
   health_cfg_load();
@@ -1580,6 +1671,10 @@ online_ok:
       int llm_tick = 0;
       int press_ms = 0;
       int long_fired = 0;
+      int key_short_seen[4] = { 0, 0, 0, 0 };
+      int key_long_seen = 0;
+      bool key_thread_ok = false;
+      pthread_t key_tid;
       uint32_t now;
       int tick;
 
@@ -1610,6 +1705,34 @@ online_ok:
           board_hwtest_gpio_init();
           board_hwtest_gpio_write(0, 0);
           board_hwtest_gpio_write(1, 0);
+
+          for (i = 0; i < 4; i++)
+            {
+              g_key_short[i] = 0;
+              key_short_seen[i] = 0;
+            }
+
+          g_key_long_ok = 0;
+          g_key_thread_stop = 0;
+
+          {
+            pthread_attr_t kattr;
+
+            pthread_attr_init(&kattr);
+            pthread_attr_setstacksize(&kattr, 4096);
+
+            if (pthread_create(&key_tid, &kattr, key_thread, NULL) == 0)
+              {
+                key_thread_ok = true;
+              }
+
+            pthread_attr_destroy(&kattr);
+          }
+
+          if (!key_thread_ok)
+            {
+              printf("velaops: key thread failed%c", 10);
+            }
         }
 
       bfd = open("/dev/gpio1", O_RDONLY);
@@ -1797,13 +1920,68 @@ online_ok:
 
           lcd_flush(fd, &vi, fb);
 
-          for (tick = 0; tick < 50; tick++)
+          for (tick = 0; tick < 250; tick++)
             {
+              bool do_action = false;
               bool pressed = false;
 
               if (g_stop)
                 {
                   break;
+                }
+
+              now = hw_ms();
+
+              for (i = 0; i < 4; i++)
+                {
+                  while (key_short_seen[i] != g_key_short[i])
+                    {
+                      int next = page;
+
+                      key_short_seen[i]++;
+
+                      if (i == 0)
+                        {
+                          next = (page + VELAOPS_UI_PAGES - 1) %
+                                 VELAOPS_UI_PAGES;
+                          show_alert = 0;
+                        }
+                      else if (i == 1)
+                        {
+                          next = (page + 1) % VELAOPS_UI_PAGES;
+                          show_alert = 0;
+                        }
+                      else if (i == 2)
+                        {
+                          next = 0;
+                          show_alert = 0;
+                        }
+                      else
+                        {
+                          if (show_alert)
+                            {
+                              show_alert = 0;
+                              muted = 1;
+                            }
+                          else
+                            {
+                              next = 0;
+                            }
+                        }
+
+                      page = next;
+                      printf("velaops: key%d short page=%d%c", i + 1, page,
+                             10);
+                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                      lcd_flush(fd, &vi, fb);
+                    }
+                }
+
+              if (key_long_seen != g_key_long_ok)
+                {
+                  key_long_seen = g_key_long_ok;
+                  do_action = true;
+                  printf("velaops: key3 long%c", 10);
                 }
 
               if (bfd >= 0)
@@ -1813,100 +1991,26 @@ online_ok:
 
               if (!pressed)
                 {
-                  press_ms += 100;
+                  if (press_ms == 0)
+                    {
+                      printf("velaops: boot down%c", 10);
+                    }
 
-                  if (press_ms == 2000 && !long_fired)
+                  press_ms += 20;
+
+                  if (press_ms >= 2000 && !long_fired)
                     {
                       long_fired = 1;
-
-                      if (alert && action_kind != 0 &&
-                          state.action_state != NULL &&
-                          strcmp(state.action_state, "WAITING") == 0)
-                        {
-                          int fixed = 0;
-                          int idx;
-
-                          printf("velaops: approved %s %s\n",
-                                 action_kind == 2 ? "kill" : "restart",
-                                 target);
-
-                          state.action_state = "RUNNING";
-                          state.action_result = target;
-                          velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
-                          lcd_flush(fd, &vi, fb);
-                          board_hwtest_gpio_write(1, 0);
-
-                          if (action_kind == 2)
-                            {
-                              rc = velaops_ssh_kill(host, port, user, pass,
-                                                    target);
-                            }
-                          else
-                            {
-                              rc = velaops_ssh_restart(host, port, user, pass,
-                                                       target);
-                            }
-
-                          if (velaops_ssh_collect(host, port, user, pass,
-                                                  svcs, ports, &snap) == 0)
-                            {
-                              apply_snapshot(&state, &snap, host);
-
-                              if (action_kind == 2)
-                                {
-                                  fixed =
-                                    strcmp(snap.top_name, target) != 0 ||
-                                    snap.top_cpu < 50.0f;
-                                }
-                              else
-                                {
-                                  idx = csv_find_index(svcs, target,
-                                                       strlen(target));
-                                  fixed = idx >= 0 &&
-                                          idx < snap.watch_count &&
-                                          snap.watch_active[idx];
-                                }
-
-                              if (rc == 0 && fixed)
-                                {
-                                  state.action_state = "DONE";
-                                  state.action_result = action_kind == 2 ?
-                                    "KILLED AND VERIFIED" :
-                                    "RESTARTED AND VERIFIED";
-                                  alert = 0;
-                                  show_alert = 0;
-                                  muted = 0;
-                                  alert_streak = 0;
-                                }
-                              else
-                                {
-                                  state.action_state = "FAILED";
-                                  state.action_result = action_kind == 2 ?
-                                    "KILL FAILED" : "RESTART FAILED";
-                                }
-                            }
-                          else
-                            {
-                              state.action_state = "FAILED";
-                              state.action_result = "VERIFY COLLECT FAILED";
-                            }
-
-                          page = 5;
-                          velaops_ui_render(fb, vi.xres, vi.yres, &state,
-                                            page);
-                          lcd_flush(fd, &vi, fb);
-                          printf("velaops: action %s state=%s\n",
-                                 target, state.action_state);
-                        }
-                      else if (alert)
-                        {
-                          show_alert = 0;
-                          muted = 1;
-                        }
+                      do_action = true;
                     }
                 }
               else
                 {
+                  if (press_ms > 0)
+                    {
+                      printf("velaops: boot up%c", 10);
+                    }
+
                   if (press_ms > 0 && press_ms < 1000)
                     {
                       if (show_alert)
@@ -1927,6 +2031,85 @@ online_ok:
                   long_fired = 0;
                 }
 
+              if (do_action && alert && action_kind != 0 &&
+                  state.action_state != NULL &&
+                  strcmp(state.action_state, "WAITING") == 0)
+                {
+                  int fixed = 0;
+                  int idx;
+
+                  printf("velaops: approved %s %s\n",
+                         action_kind == 2 ? "kill" : "restart", target);
+
+                  state.action_state = "RUNNING";
+                  state.action_result = target;
+                  velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
+                  lcd_flush(fd, &vi, fb);
+                  board_hwtest_gpio_write(1, 0);
+
+                  if (action_kind == 2)
+                    {
+                      rc = velaops_ssh_kill(host, port, user, pass, target);
+                    }
+                  else
+                    {
+                      rc = velaops_ssh_restart(host, port, user, pass, target);
+                    }
+
+                  if (velaops_ssh_collect(host, port, user, pass, svcs, ports,
+                                          &snap) == 0)
+                    {
+                      apply_snapshot(&state, &snap, host);
+
+                      if (action_kind == 2)
+                        {
+                          fixed = strcmp(snap.top_name, target) != 0 ||
+                                  snap.top_cpu < 50.0f;
+                        }
+                      else
+                        {
+                          idx = csv_find_index(svcs, target,
+                                               strlen(target));
+                          fixed = idx >= 0 && idx < snap.watch_count &&
+                                  snap.watch_active[idx];
+                        }
+
+                      if (rc == 0 && fixed)
+                        {
+                          state.action_state = "DONE";
+                          state.action_result = action_kind == 2 ?
+                            "KILLED AND VERIFIED" :
+                            "RESTARTED AND VERIFIED";
+                          alert = 0;
+                          show_alert = 0;
+                          muted = 0;
+                          alert_streak = 0;
+                        }
+                      else
+                        {
+                          state.action_state = "FAILED";
+                          state.action_result = action_kind == 2 ?
+                            "KILL FAILED" : "RESTART FAILED";
+                        }
+                    }
+                  else
+                    {
+                      state.action_state = "FAILED";
+                      state.action_result = "VERIFY COLLECT FAILED";
+                    }
+
+                  page = 5;
+                  velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                  lcd_flush(fd, &vi, fb);
+                  printf("velaops: action %s state=%s\n",
+                         target, state.action_state);
+                }
+              else if (do_action && alert)
+                {
+                  show_alert = 0;
+                  muted = 1;
+                }
+
               now = hw_ms();
 
               if (run)
@@ -1938,7 +2121,7 @@ online_ok:
                                           ((now / 250) & 1));
                 }
 
-              if (alert && show_alert && (tick % 5) == 4)
+              if (alert && show_alert && (tick % 25) == 24)
                 {
                   blink++;
                   velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
@@ -1946,12 +2129,18 @@ online_ok:
                   lcd_flush(fd, &vi, fb);
                 }
 
-              usleep(100000);
+              usleep(20000);
             }
 
           elapsed += 5;
         }
       while (!g_stop && (seconds <= 0 || elapsed < seconds));
+
+      if (key_thread_ok)
+        {
+          g_key_thread_stop = 1;
+          pthread_join(key_tid, NULL);
+        }
 
       if (run)
         {

@@ -469,7 +469,7 @@ static void draw_footer(uint16_t *fb, int w, int h,
                         const velaops_ui_state_t *s)
 {
   fill_rect(fb, w, h, 0, h - 20, w, 1, COL_BORDER);
-  draw_text(fb, w, h, 8, h - 18, "短按BOOT翻页", 2, COL_DIM);
+  draw_text(fb, w, h, 8, h - 18, "UP/DN翻页 BACK静音", 2, COL_DIM);
   draw_text_right(fb, w, h, w - 8, h - 18,
                   s->clock != NULL ? s->clock : "", 2, COL_DIM);
 }
@@ -817,7 +817,7 @@ static void draw_action(uint16_t *fb, int w, int h,
   fill_rect(fb, w, h, 8, 132, w - 16, 1, COL_BORDER);
 
   draw_text(fb, w, h, 10, 140, "仅允许白名单操作", 2, COL_DIM);
-  draw_text(fb, w, h, 10, 164, "需按住BOOT 2秒批准", 2, COL_DIM);
+  draw_text(fb, w, h, 10, 164, "需按住OK 2秒批准", 2, COL_DIM);
   draw_text(fb, w, h, 10, 188, "服务重启/终止高占用进程", 2, COL_DIM);
 }
 
@@ -866,7 +866,7 @@ static void draw_hwtest(uint16_t *fb, int w, int h,
       draw_text(fb, w, h, x + 12, y + 32, line, 2, COL_DIM);
     }
 
-  draw_text_center(fb, w, h, w / 2, 220, "按键自检 长按BOOT结束", 1,
+  draw_text_center(fb, w, h, w / 2, 220, "按键自检 长按OK结束", 1,
                    COL_DIM);
 }
 
@@ -949,7 +949,7 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
     }
 
   draw_text_center(fb, width, height, width / 2, box_y + box_h - 22,
-                   "按BOOT关闭", 2, COL_AMBER);
+                   "BACK关闭 长按OK处置", 2, COL_AMBER);
   return 0;
 }
 
