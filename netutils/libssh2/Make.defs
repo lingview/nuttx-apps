@@ -1,0 +1,14 @@
+############################################################################
+# apps/netutils/libssh2/Make.defs
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+############################################################################
+
+ifneq ($(CONFIG_NETUTILS_LIBSSH2),)
+CONFIGURED_APPS += $(APPDIR)/netutils/libssh2
+
+# Allows `<libssh2.h>` import.
+
+CFLAGS += -isystem $(APPDIR)/netutils/libssh2/include
+endif

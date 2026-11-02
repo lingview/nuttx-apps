@@ -1,0 +1,20 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config NETUTILS_LIBSSH2
+	bool "libssh2 SSH client library"
+	default n
+	depends on NET_TCP
+	depends on CRYPTO_MBEDTLS
+	---help---
+		Enable libssh2 (SSH client) built with the mbedTLS backend.
+
+if NETUTILS_LIBSSH2
+
+config NETUTILS_LIBSSH2_DEBUG
+	bool "Enable libssh2 debug traces"
+	default n
+
+endif
