@@ -285,7 +285,7 @@ static FAR void *key_thread(FAR void *arg)
             {
               lng[i] = 1;
 
-              if (i == 2)
+              if (i == 2 || i == 3)
                 {
                   pthread_mutex_lock(&g_ui_lock);
                   g_ok_long_page = g_keyui.page != NULL ? *g_keyui.page : 5;
@@ -2069,15 +2069,15 @@ online_ok:
           state.action_state = (rc == 0 && fixed) ? "DONE" : "FAILED";
           state.action_service = target;
           state.action_result = (rc == 0 && fixed) ?
-                                (is_kill ? "PROCESS KILLED AND VERIFIED" :
-                                 "RESTARTED AND VERIFIED") :
+                                (is_kill ? "KILL VERIFIED" :
+                                 "RESTART VERIFIED") :
                                 (is_kill ? "KILL FAILED" : "RESTART FAILED");
         }
       else
         {
           state.action_state = "FAILED";
           state.action_service = target;
-          state.action_result = "VERIFY COLLECT FAILED";
+          state.action_result = "VERIFY FAILED";
         }
 
       velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
@@ -2597,7 +2597,9 @@ online_ok:
                   state.action_state != NULL &&
                   strcmp(state.action_state, "WAITING") == 0)
                 {
-                  if (!g_confirm && (long_shown || long_page != 5))
+                  if (!g_confirm &&
+                      ((!long_shown && long_page != 5) ||
+                       (action_kind == ACT_EXEC && long_shown)))
                     {
                       const char *reason = g_ai_reason[0] != '\0' ?
                                            g_ai_reason : g_hres.reason;
@@ -2716,8 +2718,8 @@ online_ok:
                               state.action_result =
                                 action_kind == ACT_EXEC ? "DONE rc=0" :
                                 (action_kind == ACT_KILL ?
-                                 "KILLED AND VERIFIED" :
-                                 "UNIT ACTION VERIFIED");
+                                 "KILL VERIFIED" :
+                                 "UNIT VERIFIED");
 
                               if (action_kind != ACT_EXEC)
                                 {
@@ -2733,7 +2735,7 @@ online_ok:
                           else if (rc == -2)
                             {
                               state.action_state = "FAILED";
-                              state.action_result = "BLOCKED BY POLICY";
+                              state.action_result = "BLOCKED";
                             }
                           else
                             {
@@ -2741,14 +2743,14 @@ online_ok:
                               state.action_result =
                                 action_kind == ACT_EXEC ? "EXEC FAILED" :
                                 (action_kind == ACT_KILL ?
-                                 "KILL FAILED" : "UNIT ACTION FAILED");
+                                 "KILL FAILED" : "ACTION FAILED");
                             }
                         }
                       else
                         {
                           pthread_mutex_lock(&g_ui_lock);
                           state.action_state = "FAILED";
-                          state.action_result = "VERIFY COLLECT FAILED";
+                          state.action_result = "VERIFY FAILED";
                         }
 
                       if (action_kind == ACT_EXEC)

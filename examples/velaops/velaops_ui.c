@@ -68,37 +68,52 @@ static void glyph_for(char c, uint8_t glyph[FONT_WIDTH])
 {
   static const uint8_t letters[][FONT_WIDTH] =
   {
-    {0x1e, 0x05, 0x05, 0x1e, 0}, {0x1f, 0x15, 0x15, 0x0a, 0},
-    {0x0e, 0x11, 0x11, 0x0a, 0}, {0x1f, 0x11, 0x11, 0x0e, 0},
-    {0x1f, 0x15, 0x15, 0x11, 0}, {0x1f, 0x05, 0x05, 0x01, 0},
-    {0x0e, 0x11, 0x15, 0x1d, 0}, {0x1f, 0x04, 0x04, 0x1f, 0},
-    {0x11, 0x1f, 0x11, 0, 0},    {0x08, 0x10, 0x10, 0x0f, 0},
-    {0x1f, 0x04, 0x0a, 0x11, 0}, {0x1f, 0x10, 0x10, 0x10, 0},
-    {0x1f, 0x02, 0x04, 0x02, 0x1f}, {0x1f, 0x02, 0x04, 0x1f, 0},
-    {0x0e, 0x11, 0x11, 0x0e, 0}, {0x1f, 0x05, 0x05, 0x02, 0},
-    {0x0e, 0x11, 0x19, 0x1e, 0}, {0x1f, 0x05, 0x0d, 0x12, 0},
-    {0x12, 0x15, 0x15, 0x09, 0}, {0x01, 0x1f, 0x01, 0, 0},
-    {0x0f, 0x10, 0x10, 0x0f, 0}, {0x07, 0x08, 0x10, 0x08, 0x07},
-    {0x1f, 0x08, 0x04, 0x08, 0x1f}, {0x11, 0x0a, 0x04, 0x0a, 0x11},
-    {0x03, 0x04, 0x18, 0x04, 0x03}, {0x19, 0x15, 0x13, 0x11, 0}
+    {0x7e, 0x11, 0x11, 0x11, 0x7e}, {0x7f, 0x49, 0x49, 0x49, 0x36},
+    {0x3e, 0x41, 0x41, 0x41, 0x22}, {0x7f, 0x41, 0x41, 0x22, 0x1c},
+    {0x7f, 0x49, 0x49, 0x49, 0x41}, {0x7f, 0x09, 0x09, 0x09, 0x01},
+    {0x3e, 0x41, 0x49, 0x49, 0x7a}, {0x7f, 0x08, 0x08, 0x08, 0x7f},
+    {0x00, 0x41, 0x7f, 0x41, 0x00}, {0x20, 0x40, 0x41, 0x3f, 0x01},
+    {0x7f, 0x08, 0x14, 0x22, 0x41}, {0x7f, 0x40, 0x40, 0x40, 0x40},
+    {0x7f, 0x02, 0x0c, 0x02, 0x7f}, {0x7f, 0x04, 0x08, 0x10, 0x7f},
+    {0x3e, 0x41, 0x41, 0x41, 0x3e}, {0x7f, 0x09, 0x09, 0x09, 0x06},
+    {0x3e, 0x41, 0x51, 0x21, 0x5e}, {0x7f, 0x09, 0x19, 0x29, 0x46},
+    {0x46, 0x49, 0x49, 0x49, 0x31}, {0x01, 0x01, 0x7f, 0x01, 0x01},
+    {0x3f, 0x40, 0x40, 0x40, 0x3f}, {0x1f, 0x20, 0x40, 0x20, 0x1f},
+    {0x3f, 0x40, 0x38, 0x40, 0x3f}, {0x63, 0x14, 0x08, 0x14, 0x63},
+    {0x07, 0x08, 0x70, 0x08, 0x07}, {0x61, 0x51, 0x49, 0x45, 0x43}
+  };
+  static const uint8_t lower[][FONT_WIDTH] =
+  {
+    {0x20, 0x54, 0x54, 0x54, 0x78}, {0x7f, 0x48, 0x44, 0x44, 0x38},
+    {0x38, 0x44, 0x44, 0x44, 0x28}, {0x38, 0x44, 0x44, 0x48, 0x7f},
+    {0x38, 0x54, 0x54, 0x54, 0x18}, {0x08, 0x7e, 0x09, 0x01, 0x02},
+    {0x08, 0x54, 0x54, 0x54, 0x3c}, {0x7f, 0x08, 0x04, 0x04, 0x78},
+    {0x00, 0x44, 0x7d, 0x40, 0x00}, {0x20, 0x40, 0x44, 0x3d, 0x00},
+    {0x7f, 0x10, 0x28, 0x44, 0x00}, {0x00, 0x41, 0x7f, 0x40, 0x00},
+    {0x7c, 0x04, 0x18, 0x04, 0x78}, {0x7c, 0x08, 0x04, 0x04, 0x78},
+    {0x38, 0x44, 0x44, 0x44, 0x38}, {0x7c, 0x14, 0x14, 0x14, 0x08},
+    {0x08, 0x14, 0x14, 0x14, 0x7c}, {0x7c, 0x08, 0x04, 0x04, 0x08},
+    {0x48, 0x54, 0x54, 0x54, 0x24}, {0x04, 0x3f, 0x44, 0x40, 0x20},
+    {0x3c, 0x40, 0x40, 0x20, 0x7c}, {0x1c, 0x20, 0x40, 0x20, 0x1c},
+    {0x3c, 0x40, 0x30, 0x40, 0x3c}, {0x44, 0x28, 0x10, 0x28, 0x44},
+    {0x0c, 0x50, 0x50, 0x50, 0x3c}, {0x44, 0x64, 0x54, 0x4c, 0x44}
   };
   static const uint8_t digits[][FONT_WIDTH] =
   {
-    {0x0e, 0x11, 0x11, 0x0e, 0}, {0x12, 0x1f, 0x10, 0, 0},
-    {0x19, 0x15, 0x15, 0x12, 0}, {0x11, 0x15, 0x15, 0x0a, 0},
-    {0x07, 0x04, 0x1f, 0x04, 0}, {0x17, 0x15, 0x15, 0x09, 0},
-    {0x0e, 0x15, 0x15, 0x08, 0}, {0x01, 0x01, 0x1d, 0x03, 0},
-    {0x0a, 0x15, 0x15, 0x0a, 0}, {0x02, 0x15, 0x15, 0x0e, 0}
+    {0x3e, 0x51, 0x49, 0x45, 0x3e}, {0x00, 0x42, 0x7f, 0x40, 0x00},
+    {0x42, 0x61, 0x51, 0x49, 0x46}, {0x21, 0x41, 0x45, 0x4b, 0x31},
+    {0x18, 0x14, 0x12, 0x7f, 0x10}, {0x27, 0x45, 0x45, 0x45, 0x39},
+    {0x3c, 0x4a, 0x49, 0x49, 0x30}, {0x01, 0x71, 0x09, 0x05, 0x03},
+    {0x36, 0x49, 0x49, 0x49, 0x36}, {0x06, 0x49, 0x49, 0x29, 0x1e}
   };
 
   memset(glyph, 0, FONT_WIDTH);
 
   if (c >= 'a' && c <= 'z')
     {
-      c = (char)(c - 'a' + 'A');
+      memcpy(glyph, lower[c - 'a'], FONT_WIDTH);
     }
-
-  if (c >= 'A' && c <= 'Z')
+  else if (c >= 'A' && c <= 'Z')
     {
       memcpy(glyph, letters[c - 'A'], FONT_WIDTH);
     }
@@ -113,42 +128,48 @@ static void glyph_for(char c, uint8_t glyph[FONT_WIDTH])
     }
   else if (c == ':')
     {
-      glyph[1] = 0x0a;
-      glyph[3] = 0x0a;
+      const uint8_t v[] = {0x00, 0x36, 0x36, 0x00, 0x00};
+      memcpy(glyph, v, sizeof(v));
     }
   else if (c == '.')
     {
-      glyph[1] = 0x10;
+      const uint8_t v[] = {0x00, 0x60, 0x60, 0x00, 0x00};
+      memcpy(glyph, v, sizeof(v));
     }
   else if (c == '-')
     {
-      glyph[1] = 0x04;
-      glyph[2] = 0x04;
+      const uint8_t v[] = {0x08, 0x08, 0x08, 0x08, 0x08};
+      memcpy(glyph, v, sizeof(v));
     }
   else if (c == '/')
     {
-      glyph[0] = 0x10;
-      glyph[1] = 0x08;
-      glyph[2] = 0x04;
-      glyph[3] = 0x02;
-      glyph[4] = 0x01;
+      const uint8_t v[] = {0x20, 0x10, 0x08, 0x04, 0x02};
+      memcpy(glyph, v, sizeof(v));
     }
   else if (c == '=')
     {
-      glyph[1] = 0x0a;
-      glyph[3] = 0x0a;
+      const uint8_t v[] = {0x14, 0x14, 0x14, 0x14, 0x14};
+      memcpy(glyph, v, sizeof(v));
     }
   else if (c == '!')
     {
-      glyph[1] = 0x17;
-      glyph[3] = 0x11;
+      const uint8_t v[] = {0x00, 0x00, 0x5f, 0x00, 0x00};
+      memcpy(glyph, v, sizeof(v));
     }
   else if (c == '?')
     {
-      glyph[0] = 0x19;
-      glyph[1] = 0x15;
-      glyph[2] = 0x15;
-      glyph[3] = 0x12;
+      const uint8_t v[] = {0x02, 0x01, 0x51, 0x09, 0x06};
+      memcpy(glyph, v, sizeof(v));
+    }
+  else if (c == ',')
+    {
+      const uint8_t v[] = {0x00, 0x50, 0x30, 0x00, 0x00};
+      memcpy(glyph, v, sizeof(v));
+    }
+  else if (c == '_')
+    {
+      const uint8_t v[] = {0x40, 0x40, 0x40, 0x40, 0x40};
+      memcpy(glyph, v, sizeof(v));
     }
 }
 
@@ -241,9 +262,9 @@ static void draw_text(uint16_t *fb, int w, int h, int x, int y,
       if (cp < 0x80)
         {
           /* Center the 5x7 cell inside a 16px CJK row: the ASCII ink is
-           * 10px tall at 2x and would otherwise sit on the very top. */
+           * 14px tall at 2x and would otherwise sit on the very top. */
 
-          int dy = (scale == 2) ? 3 : 0;
+          int dy = (scale == 2) ? 1 : 0;
           int gx;
           int gy;
 
@@ -456,10 +477,10 @@ static void draw_header(uint16_t *fb, int w, int h,
   fill_rect(fb, w, h, 0, 0, w, 28, COL_PANEL);
   fill_rect(fb, w, h, 0, 28, w, 1, COL_BORDER);
 
-  draw_text(fb, w, h, 8, 6, "维拉哨兵", 1, COL_GREEN);
+  draw_text(fb, w, h, 8, 6, "VelaOps", 2, COL_GREEN);
 
-  fill_rect(fb, w, h, 84, 12, 8, 8, color);
-  draw_text(fb, w, h, 96, 6, word, 2, color);
+  fill_rect(fb, w, h, 100, 12, 8, 8, color);
+  draw_text(fb, w, h, 112, 6, word, 2, color);
 
   snprintf(buf, sizeof(buf), "第%d/6页", page + 1);
   draw_text_right(fb, w, h, w - 8, 6, buf, 2, COL_TEXT);
@@ -526,7 +547,7 @@ static void draw_overview(uint16_t *fb, int w, int h,
   draw_text(fb, w, h, 10, 36, "健康分", 2, COL_DIM);
 
   snprintf(buf, sizeof(buf), "%d", s->score);
-  draw_text(fb, w, h, 10, 54, buf, 4, color);
+  draw_text(fb, w, h, 10, 60, buf, 4, color);
 
   snprintf(buf, sizeof(buf), "%s", s->host != NULL ? s->host : "-");
   draw_text(fb, w, h, 10, 92, buf, 1, COL_DIM);
@@ -536,34 +557,23 @@ static void draw_overview(uint16_t *fb, int w, int h,
       int y = 38 + i * 22;
 
       draw_text(fb, w, h, 116, y, labels[i], 1, COL_DIM);
-      draw_bar(fb, w, h, 160, y + 2, w - 170,
+      draw_bar(fb, w, h, 160, y + 2, w - 208,
                (float)values[i], values[i] >= 80 ? COL_GREEN :
                (values[i] >= 60 ? COL_AMBER : COL_RED));
       snprintf(buf, sizeof(buf), "%d", values[i]);
-      draw_text_right(fb, w, h, w - 8, y, buf, 1, COL_TEXT);
+      draw_text_right(fb, w, h, w - 8, y, buf, 2, COL_TEXT);
     }
 
   fill_rect(fb, w, h, 8, 152, w - 16, 1, COL_BORDER);
 
-  draw_text(fb, w, h, 10, 158, "主要问题", 1, COL_DIM);
+  draw_text(fb, w, h, 10, 156, "主要问题", 1, COL_DIM);
 
   count = wrap_text(s->alert_reason != NULL ? s->alert_reason : "-",
                     lines, 2, w - 20);
   for (i = 0; i < count; i++)
     {
-      draw_text(fb, w, h, 10, 172 + i * 18, lines[i], 2,
+      draw_text(fb, w, h, 10, 176 + i * 18, lines[i], 2,
                 s->health_critical ? COL_RED : COL_TEXT);
-    }
-
-  if (s->top_name[0] != '\0' && s->top_cpu > 0.5f)
-    {
-      snprintf(buf, sizeof(buf), "TOP %s %d%%", s->top_name,
-               (int)(s->top_cpu + 0.5f));
-      draw_text(fb, w, h, 10, 210, buf, 1, COL_DIM);
-    }
-  else if (s->uptime != NULL)
-    {
-      draw_text(fb, w, h, 10, 210, s->uptime, 1, COL_DIM);
     }
 }
 
@@ -619,15 +629,15 @@ static void draw_metric_pair(uint16_t *fb, int w, int h, int x, int y,
 {
   char buf[24];
 
-  draw_text(fb, w, h, x, y, label, 1, COL_DIM);
+  draw_text(fb, w, h, x, y, label, 2, COL_DIM);
 
   if (value >= 0.0f)
     {
       snprintf(buf, sizeof(buf), "%d%%", (int)(value + 0.5f));
-      draw_text_right(fb, w, h, x + 140, y, buf, 1, level_color(value));
+      draw_text_right(fb, w, h, x + 140, y, buf, 2, level_color(value));
     }
 
-  draw_bar(fb, w, h, x, y + 14, 140, value < 0.0f ? 0.0f : value,
+  draw_bar(fb, w, h, x, y + 18, 140, value < 0.0f ? 0.0f : value,
            level_color(value < 0.0f ? 0.0f : value));
 }
 
@@ -636,22 +646,22 @@ static void draw_performance(uint16_t *fb, int w, int h,
 {
   char buf[40];
 
-  draw_text(fb, w, h, 10, 36, "CPU 历史", 1, COL_DIM);
-  draw_sparkline(fb, w, h, 10, 52, w - 20, 66,
+  draw_text(fb, w, h, 10, 36, "CPU 历史", 2, COL_DIM);
+  draw_sparkline(fb, w, h, 10, 54, w - 20, 56,
                  s->cpu_hist, s->cpu_hist_len);
 
-  draw_metric_pair(fb, w, h, 10, 126, "内存", s->mem);
-  draw_metric_pair(fb, w, h, 170, 126, "磁盘", s->disk);
-  draw_metric_pair(fb, w, h, 10, 158, "SWAP", s->swap);
-  draw_metric_pair(fb, w, h, 170, 158, "INODE", s->inode);
+  draw_metric_pair(fb, w, h, 10, 116, "内存", s->mem);
+  draw_metric_pair(fb, w, h, 170, 116, "磁盘", s->disk);
+  draw_metric_pair(fb, w, h, 10, 146, "SWAP", s->swap);
+  draw_metric_pair(fb, w, h, 170, 146, "INODE", s->inode);
 
   snprintf(buf, sizeof(buf), "CPU %d%%  负载 %.2f  核 %d",
            (int)(s->cpu + 0.5f), (double)s->load1, s->cores);
-  draw_text(fb, w, h, 10, 194, buf, 1, COL_TEXT);
+  draw_text(fb, w, h, 10, 180, buf, 2, COL_TEXT);
 
-  snprintf(buf, sizeof(buf), "温度 %.1fC  僵尸 %d  NTP", (double)s->temp,
+  snprintf(buf, sizeof(buf), "温度 %.1fC  僵尸进程 %d  NTP", (double)s->temp,
            s->zombies);
-  draw_text(fb, w, h, 10, 208, buf, 1, COL_DIM);
+  draw_text(fb, w, h, 10, 198, buf, 2, COL_DIM);
 }
 
 static void draw_ops(uint16_t *fb, int w, int h,
@@ -699,11 +709,11 @@ static void draw_ops(uint16_t *fb, int w, int h,
     {
       snprintf(buf, sizeof(buf), "重点服务 %d/%d 正常", s->services_ok,
                s->services_total);
-      draw_text(fb, w, h, 10, 190, buf, 1, COL_DIM);
+      draw_text(fb, w, h, 10, 190, buf, 2, COL_DIM);
     }
   else
     {
-      draw_text(fb, w, h, 10, 190, "未配置重点服务（全量监控）", 1,
+      draw_text(fb, w, h, 10, 190, "未配置重点服务（全量监控）", 2,
                 COL_DIM);
     }
 }
@@ -718,10 +728,10 @@ static void draw_text_page(uint16_t *fb, int w, int h, const char *title,
   draw_text(fb, w, h, 10, 36, title, 2, title_color);
   fill_rect(fb, w, h, 8, 56, w - 16, 1, COL_BORDER);
 
-  count = wrap_text(body != NULL ? body : "-", lines, 9, w - 20);
+  count = wrap_text(body != NULL ? body : "-", lines, 8, w - 20);
   for (i = 0; i < count; i++)
     {
-      draw_text(fb, w, h, 10, 64 + i * 18, lines[i], 2, COL_TEXT);
+      draw_text(fb, w, h, 10, 60 + i * 17, lines[i], 2, COL_TEXT);
     }
 }
 
@@ -734,7 +744,7 @@ static void draw_summary(uint16_t *fb, int w, int h,
 
   snprintf(buf, sizeof(buf), "健康分 %d  告警 %d  模型 MIMO", s->score,
            s->alerts);
-  draw_text(fb, w, h, 10, 214, buf, 1, COL_DIM);
+  draw_text(fb, w, h, 10, 202, buf, 2, COL_DIM);
 }
 
 static void draw_rootcause(uint16_t *fb, int w, int h,
@@ -760,13 +770,13 @@ static void draw_rootcause(uint16_t *fb, int w, int h,
                   s->port_lost > 0 ? COL_RED : COL_DIM);
 
   snprintf(buf, sizeof(buf), "ESTAB %d  TIME_WAIT %d", s->estab, s->tw);
-  draw_text(fb, w, h, 10, 120, buf, 1, COL_DIM);
+  draw_text(fb, w, h, 10, 116, buf, 2, COL_DIM);
 
   snprintf(buf, sizeof(buf), "网卡错误 %lu  丢包 %lu", s->nic_err,
            s->nic_drop);
-  draw_text(fb, w, h, 10, 136, buf, 1, COL_DIM);
+  draw_text(fb, w, h, 10, 136, buf, 2, COL_DIM);
 
-  fill_rect(fb, w, h, 8, 152, w - 16, 1, COL_BORDER);
+  fill_rect(fb, w, h, 8, 156, w - 16, 1, COL_BORDER);
 
   if (s->top_name[0] != '\0')
     {
@@ -781,12 +791,12 @@ static void draw_rootcause(uint16_t *fb, int w, int h,
   count = wrap_text(buf, lines, 2, w - 20);
   for (i = 0; i < count; i++)
     {
-      draw_text(fb, w, h, 10, 162 + i * 18, lines[i], 2, COL_TEXT);
+      draw_text(fb, w, h, 10, 160 + i * 18, lines[i], 2, COL_TEXT);
     }
 
   if (s->port_new > 0 || s->port_lost > 0)
     {
-      draw_text(fb, w, h, 10, 206, "端口漂移可忽略项请在配置中维护", 1,
+      draw_text(fb, w, h, 10, 196, "端口漂移可忽略项请在配置中维护", 1,
                 COL_DIM);
     }
 }
@@ -796,91 +806,72 @@ static void draw_action(uint16_t *fb, int w, int h,
 {
   char lines[4][TEXT_LINE_MAX];
   char buf[48];
+  int has_cmd = s->ai_command != NULL && s->ai_command[0] != '\0';
   int waiting = s->action_state != NULL &&
                 strcmp(s->action_state, "WAITING") == 0;
   int count;
   int i;
-  int y;
 
   draw_text(fb, w, h, 10, 36, "处置", 2, COL_GREEN);
-  fill_rect(fb, w, h, 8, 56, w - 16, 1, COL_BORDER);
+  fill_rect(fb, w, h, 8, 52, w - 16, 1, COL_BORDER);
 
-  draw_text(fb, w, h, 10, 60, "状态", 1, COL_DIM);
-  draw_text(fb, w, h, 52, 60,
+  draw_text(fb, w, h, 10, 56, "状态", 2, COL_DIM);
+  draw_text(fb, w, h, 60, 56,
             waiting ? "等待批准" :
-            (s->action_state != NULL ? s->action_state : "空闲"), 1,
+            (s->action_state != NULL ? s->action_state : "空闲"), 2,
             waiting ? COL_AMBER : COL_TEXT);
 
-  draw_text(fb, w, h, 10, 71, "目标", 1, COL_DIM);
-  draw_text(fb, w, h, 52, 71,
-            s->action_service != NULL ? s->action_service : "-", 1,
+  draw_text(fb, w, h, 10, 74, "目标", 2, COL_DIM);
+  draw_text(fb, w, h, 60, 74,
+            s->action_service != NULL ? s->action_service : "-", 2,
             COL_TEXT);
 
-  draw_text(fb, w, h, 10, 82, "结果", 1, COL_DIM);
-  draw_text(fb, w, h, 52, 82,
-            s->action_result != NULL ? s->action_result : "-", 1,
+  draw_text(fb, w, h, 10, 92, "结果", 2, COL_DIM);
+  draw_text(fb, w, h, 60, 92,
+            s->action_result != NULL ? s->action_result : "-", 2,
             COL_TEXT);
 
-  fill_rect(fb, w, h, 8, 94, w - 16, 1, COL_BORDER);
-
-  y = 98;
+  fill_rect(fb, w, h, 8, 110, w - 16, 1, COL_BORDER);
 
   if (s->ai_reason != NULL && s->ai_reason[0] != '\0')
     {
-      draw_text(fb, w, h, 10, y, s->ai_suggested ? "AI建议" : "判定理由",
-                1, s->ai_suggested ? COL_CYAN : COL_DIM);
+      draw_text(fb, w, h, 10, 116, s->ai_suggested ? "AI建议" : "判定理由",
+                2, s->ai_suggested ? COL_CYAN : COL_DIM);
 
-      count = wrap_text(s->ai_reason, lines,
-                        (s->ai_command != NULL &&
-                         s->ai_command[0] != '\0') ? 1 : 2,
+      count = wrap_text(s->ai_reason, lines, has_cmd ? 1 : 2, w - 20);
+      for (i = 0; i < count; i++)
+        {
+          draw_text(fb, w, h, 10, 136 + i * 18, lines[i], 2, COL_TEXT);
+        }
+    }
+
+  if (has_cmd)
+    {
+      draw_text(fb, w, h, 10, 156, "待执行命令（长按OK执行）", 2,
+                COL_AMBER);
+
+      count = wrap_text(s->ai_command, lines,
+                        (s->cmd_output != NULL &&
+                         s->cmd_output[0] != '\0') ? 3 : 4,
                         (w - 20) * 2);
       for (i = 0; i < count; i++)
         {
-          draw_text(fb, w, h, 10, y + 12 + i * 11, lines[i], 1, COL_TEXT);
+          draw_text(fb, w, h, 10, 174 + i * 10, lines[i], 1, COL_TEXT);
         }
-
-      y += 12 + count * 11 + 2;
-    }
-
-  if (s->ai_command != NULL && s->ai_command[0] != '\0')
-    {
-      draw_text(fb, w, h, 10, y, "待执行命令（长按OK）", 1, COL_AMBER);
-
-      count = wrap_text(s->ai_command, lines, 4, (w - 20) * 2);
-      for (i = 0; i < count; i++)
-        {
-          draw_text(fb, w, h, 10, y + 12 + i * 11, lines[i], 1, COL_TEXT);
-        }
-
-      y += 12 + count * 11 + 2;
     }
 
   if (s->cmd_output != NULL && s->cmd_output[0] != '\0')
     {
-      draw_text(fb, w, h, 10, y, "输出", 1, COL_DIM);
-
       count = wrap_text(s->cmd_output, lines, 1, (w - 20) * 2);
       if (count > 0)
         {
-          draw_text(fb, w, h, 46, y, lines[0], 1, COL_TEXT);
+          draw_text(fb, w, h, 10, 204, lines[0], 1, COL_DIM);
         }
-
-      y += 11;
     }
-
-  if (y > 194)
-    {
-      y = 194;
-    }
-
-  if (!waiting)
+  else if (!has_cmd)
     {
       snprintf(buf, sizeof(buf), "健康分 %d", s->score);
-      draw_text(fb, w, h, 10, y + 4, buf, 1, COL_DIM);
-    }
-  else
-    {
-      draw_text(fb, w, h, 10, y + 4, "长按OK执行 BACK静音", 1, COL_AMBER);
+      draw_text(fb, w, h, 10, 174, buf, 2, COL_DIM);
     }
 }
 
@@ -1004,7 +995,7 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
   draw_text_center(fb, width, height, width / 2, box_y + 12, title, 2,
                    COL_RED);
 
-  count = wrap_text(text, lines, 4, width - 86);
+  count = wrap_text(text, lines, 3, width - 86);
   for (i = 0; i < count; i++)
     {
       draw_text(fb, width, height, box_x + 14, box_y + 44 + i * 18,
@@ -1012,7 +1003,7 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
     }
 
   draw_text_center(fb, width, height, width / 2, box_y + box_h - 22,
-                   "BACK关闭 长按OK确认", 2, COL_AMBER);
+                   "BACK关闭 长按OK执行", 2, COL_AMBER);
   return 0;
 }
 
@@ -1049,17 +1040,17 @@ int velaops_ui_render_confirm(uint16_t *fb, int width, int height,
   count = wrap_text(headline, lines, 2, (width - 44) * 2);
   for (i = 0; i < count; i++)
     {
-      draw_text(fb, width, height, box_x + 12, box_y + 36 + i * 12,
+      draw_text(fb, width, height, box_x + 12, box_y + 32 + i * 18,
                 lines[i], 1, COL_TEXT);
     }
 
-  fill_rect(fb, width, height, box_x + 10, box_y + 62, box_w - 20, 1,
+  fill_rect(fb, width, height, box_x + 10, box_y + 70, box_w - 20, 1,
             COL_BORDER);
 
-  count = wrap_text(detail, lines, 5, (width - 44) * 2);
+  count = wrap_text(detail, lines, 4, (width - 44) * 2);
   for (i = 0; i < count; i++)
     {
-      draw_text(fb, width, height, box_x + 12, box_y + 70 + i * 12,
+      draw_text(fb, width, height, box_x + 12, box_y + 76 + i * 18,
                 lines[i], 1, COL_CYAN);
     }
 
