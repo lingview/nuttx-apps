@@ -1012,7 +1012,7 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
     }
 
   draw_text_center(fb, width, height, width / 2, box_y + box_h - 22,
-                   "BACK关闭 UP/DN翻页 长按OK", 2, COL_AMBER);
+                   "BACK关闭 长按OK确认", 2, COL_AMBER);
   return 0;
 }
 

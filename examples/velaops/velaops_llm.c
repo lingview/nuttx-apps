@@ -27,6 +27,7 @@
 
 #include "velaops_llm.h"
 #include "velaops_pool.h"
+#include "velaops_conf.h"
 
 int velaops_llm_prealloc(void)
 {
@@ -333,6 +334,10 @@ int velaops_llm_chat(const char *url, const char *model, const char *key,
   static char port[8];
   static char path[LLM_PATH_MAX];
   static char esc[1024];
+  static char ipcfg[32];
+  struct sockaddr_in addr4;
+  struct sockaddr *saddr = NULL;
+  socklen_t saddrlen = 0;
   char *body = NULL;
   char *resp = NULL;
   char *hdr = NULL;
@@ -357,17 +362,44 @@ int velaops_llm_chat(const char *url, const char *model, const char *key,
 
   printf("velaops: llm %s %s%s\n", host, port, path);
 
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
+  ipcfg[0] = '\0';
+  velaops_conf_get("llm_ip", ipcfg, sizeof(ipcfg));
 
-  if (getaddrinfo(host, port, &hints, &res) != 0 || res == NULL)
+  memset(&addr4, 0, sizeof(addr4));
+  addr4.sin_family = AF_INET;
+  addr4.sin_port = htons((uint16_t)atoi(port));
+
+  if (ipcfg[0] != '\0' &&
+      inet_pton(AF_INET, ipcfg, &addr4.sin_addr) == 1)
     {
-      printf("velaops: llm dns failed\n");
-      goto out;
+      saddr = (struct sockaddr *)&addr4;
+      saddrlen = sizeof(addr4);
+      printf("velaops: llm ip %s%c", ipcfg, 10);
     }
+  else
+    {
+      memset(&hints, 0, sizeof(hints));
+      hints.ai_family = AF_INET;
+      hints.ai_socktype = SOCK_STREAM;
 
-  printf("velaops: llm dns ok%c", 10);
+      if (getaddrinfo(host, port, &hints, &res) != 0 || res == NULL)
+        {
+          printf("velaops: llm dns failed\n");
+          goto out;
+        }
+
+      {
+        char ipstr[INET_ADDRSTRLEN];
+
+        inet_ntop(AF_INET, &((struct sockaddr_in *)res->ai_addr)->sin_addr,
+                  ipstr, sizeof(ipstr));
+        printf("velaops: llm dns ok ip=%s%c", ipstr, 10);
+        velaops_conf_set("llm_ip", ipstr);
+      }
+
+      saddr = res->ai_addr;
+      saddrlen = res->ai_addrlen;
+    }
 
   conn.fd = socket(AF_INET, SOCK_STREAM, 0);
   if (conn.fd < 0)
@@ -379,13 +411,13 @@ int velaops_llm_chat(const char *url, const char *model, const char *key,
   {
     struct timeval tv;
 
-    tv.tv_sec = 20;
+    tv.tv_sec = 8;
     tv.tv_usec = 0;
     setsockopt(conn.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(conn.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
   }
 
-  if (connect(conn.fd, res->ai_addr, res->ai_addrlen) < 0)
+  if (connect(conn.fd, saddr, saddrlen) < 0)
     {
       printf("velaops: llm connect failed %d\n", errno);
       goto out;

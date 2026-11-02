@@ -398,6 +398,8 @@ static int save_config(const char *body)
   char thr_disk[8];
   char alert_score[8];
   char recover_score[8];
+  char llm_ip[32];
+  char dns[32];
   char ignore_ports[64];
   char ignore_units[96];
   char kill_allow[64];
@@ -425,6 +427,8 @@ static int save_config(const char *body)
   form_get(body, "ignore_ports", ignore_ports, sizeof(ignore_ports));
   form_get(body, "ignore_units", ignore_units, sizeof(ignore_units));
   form_get(body, "kill_allow", kill_allow, sizeof(kill_allow));
+  form_get(body, "llm_ip", llm_ip, sizeof(llm_ip));
+  form_get(body, "dns", dns, sizeof(dns));
   form_get(body, "ssh_port", port, sizeof(port));
   form_get(body, "static_ip", static_ip, sizeof(static_ip));
   form_get(body, "static_gw", static_gw, sizeof(static_gw));
@@ -461,6 +465,8 @@ static int save_config(const char *body)
                  "ignore_ports=%s\n"
                  "ignore_units=%s\n"
                  "kill_allow=%s\n"
+                 "llm_ip=%s\n"
+                 "dns=%s\n"
                  "static_ip=%s\n"
                  "static_gw=%s\n"
                  "static_mask=%s\n",
@@ -468,7 +474,7 @@ static int save_config(const char *body)
                  fields[4], fields[5], port, fields[6], fields[7],
                  services, ports, repair,
                  thr_cpu, thr_mem, thr_disk, alert_score, recover_score,
-                 ignore_ports, ignore_units, kill_allow,
+                 ignore_ports, ignore_units, kill_allow, llm_ip, dns,
                  static_ip, static_gw, static_mask);
 
   if (len <= 0 || len >= (int)sizeof(file))
@@ -742,6 +748,8 @@ static void serve_page(int fd)
   char v_url[128];
   char v_model[64];
   char v_key[96];
+  char v_ip[32];
+  char v_dns[32];
   char v_host[64];
   char v_port[8];
   char v_user[32];
@@ -771,6 +779,8 @@ static void serve_page(int fd)
   v_url[0] = 0;
   v_model[0] = 0;
   v_key[0] = 0;
+  v_ip[0] = 0;
+  v_dns[0] = 0;
   v_host[0] = 0;
   v_port[0] = 0;
   v_user[0] = 0;
@@ -795,6 +805,8 @@ static void serve_page(int fd)
   velaops_conf_get("llm_url", v_url, sizeof(v_url));
   velaops_conf_get("llm_model", v_model, sizeof(v_model));
   velaops_conf_get("llm_key", v_key, sizeof(v_key));
+  velaops_conf_get("llm_ip", v_ip, sizeof(v_ip));
+  velaops_conf_get("dns", v_dns, sizeof(v_dns));
   velaops_conf_get("ssh_host", v_host, sizeof(v_host));
   velaops_conf_get("ssh_port", v_port, sizeof(v_port));
   velaops_conf_get("ssh_user", v_user, sizeof(v_user));
@@ -884,6 +896,16 @@ static void serve_page(int fd)
       strcpy(v_ign_ports, "111");
     }
 
+  if (v_ip[0] == 0)
+    {
+      strcpy(v_ip, "202.69.4.23");
+    }
+
+  if (v_dns[0] == 0)
+    {
+      strcpy(v_dns, "223.5.5.5");
+    }
+
   if (v_kill[0] == 0)
     {
       strcpy(v_kill, "cpu-burner");
@@ -931,7 +953,12 @@ static void serve_page(int fd)
   scan_escape(v_wpass, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,
            "<label>密码</label>"
-           "<input name=wifi_pass type=password value=\"%s\"></fieldset>", esc);
+           "<input name=wifi_pass type=password value=\"%s\">", esc);
+
+  scan_escape(v_dns, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>DNS 服务器</label><input name=dns value=\"%s\">"
+           "</fieldset>", esc);
 
   scan_escape(v_url, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,
@@ -945,7 +972,12 @@ static void serve_page(int fd)
   scan_escape(v_key, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,
            "<label>API Key</label>"
-           "<input name=llm_key type=password value=\"%s\"></fieldset>", esc);
+           "<input name=llm_key type=password value=\"%s\">", esc);
+
+  scan_escape(v_ip, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>模型 IP（可选，绕过 DNS）</label>"
+           "<input name=llm_ip value=\"%s\"></fieldset>", esc);
 
   scan_escape(v_host, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,

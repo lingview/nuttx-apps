@@ -86,7 +86,7 @@ static int open_authed_session(const char *host, const char *port,
   int attempt;
   int rc;
 
-  for (attempt = 0; attempt < 2; attempt++)
+  for (attempt = 0; attempt < 3; attempt++)
     {
       *fd = tcp_connect(host, port);
       if (*fd < 0)
