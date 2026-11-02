@@ -139,6 +139,7 @@ static uint32_t hw_ms(void)
 static volatile int g_key_short[4];
 static volatile int g_key_long_ok;
 static volatile int g_key_thread_stop;
+static volatile int g_key_mute_req;
 
 static FAR void *key_thread(FAR void *arg)
 {
@@ -176,6 +177,13 @@ static FAR void *key_thread(FAR void *arg)
                     {
                       start[i] = now;
                       lng[i] = 0;
+
+                      if (i == 2 || i == 3)
+                        {
+                          g_key_mute_req++;
+                          board_hwtest_gpio_write(1, 0);
+                          board_hwtest_gpio_write(0, 0);
+                        }
                     }
                   else if (now - start[i] < 1000)
                     {
@@ -481,6 +489,165 @@ static char g_base_ports[240];
 static char g_ignore_ports[96];
 static char g_ignore_units[160];
 static char g_kill_allow[96] = "cpu-burner";
+
+#define ACT_NONE   0
+#define ACT_UNIT   1
+#define ACT_KILL   2
+#define ACT_EXEC   3
+
+static char g_ai_action[12];
+static char g_ai_target[64];
+static char g_ai_command[VELAOPS_CMD_LEN + 56];
+static char g_ai_reason[97];
+static int  g_ai_valid;
+static char g_act_verb[10] = "restart";
+static char g_act_command[VELAOPS_CMD_LEN + 56];
+static char g_cmd_output[128];
+
+static int json_get_str(const char *json, const char *key, char *out,
+                        size_t size)
+{
+  char pattern[24];
+  const char *p;
+  size_t used = 0;
+  int n;
+
+  if (json == NULL || key == NULL || out == NULL || size == 0)
+    {
+      return -1;
+    }
+
+  n = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+  if (n <= 0 || n >= (int)sizeof(pattern))
+    {
+      return -1;
+    }
+
+  p = strstr(json, pattern);
+  if (p == NULL)
+    {
+      return -1;
+    }
+
+  p = strchr(p + n, ':');
+  if (p == NULL)
+    {
+      return -1;
+    }
+
+  p++;
+
+  while (*p == ' ' || *p == '\t')
+    {
+      p++;
+    }
+
+  if (*p != '"')
+    {
+      return -1;
+    }
+
+  p++;
+
+  while (*p != '\0' && *p != '"')
+    {
+      char c = *p++;
+
+      if (c == '\\' && *p != '\0')
+        {
+          c = *p++;
+
+          if (c == 'n' || c == 'r' || c == 't')
+            {
+              c = ' ';
+            }
+          else if (c != '"' && c != '\\' && c != '/')
+            {
+              continue;
+            }
+        }
+
+      if (used + 1 < size)
+        {
+          out[used++] = c;
+        }
+    }
+
+  out[used] = '\0';
+  return used > 0 ? 0 : -1;
+}
+
+static int parse_ai_action(const char *answer)
+{
+  g_ai_action[0] = '\0';
+  g_ai_target[0] = '\0';
+  g_ai_command[0] = '\0';
+  g_ai_reason[0] = '\0';
+  g_ai_valid = 0;
+
+  if (json_get_str(answer, "action", g_ai_action,
+                   sizeof(g_ai_action)) < 0)
+    {
+      return 0;
+    }
+
+  json_get_str(answer, "target", g_ai_target, sizeof(g_ai_target));
+  json_get_str(answer, "command", g_ai_command, sizeof(g_ai_command));
+  json_get_str(answer, "reason", g_ai_reason, sizeof(g_ai_reason));
+  g_ai_valid = 1;
+  return 1;
+}
+
+static int name_chars_ok(const char *name, int allow_at)
+{
+  const char *p;
+
+  if (name == NULL || *name == '\0' || strlen(name) >= 48)
+    {
+      return 0;
+    }
+
+  for (p = name; *p != '\0'; p++)
+    {
+      if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+          (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' ||
+          *p == '-' || (allow_at && *p == '@'))
+        {
+          continue;
+        }
+
+      return 0;
+    }
+
+  return 1;
+}
+
+static int command_ok(const char *cmd)
+{
+  size_t len;
+  size_t i;
+
+  if (cmd == NULL || cmd[0] == '\0')
+    {
+      return 0;
+    }
+
+  len = strlen(cmd);
+  if (len >= VELAOPS_CMD_LEN)
+    {
+      return 0;
+    }
+
+  for (i = 0; i < len; i++)
+    {
+      if (cmd[i] < 0x20 || cmd[i] > 0x7e)
+        {
+          return 0;
+        }
+    }
+
+  return !velaops_ssh_command_blocked(cmd);
+}
 
 static float conf_float(const char *key, float def)
 {
@@ -1187,6 +1354,64 @@ int main(int argc, FAR char *argv[])
   velaops_llm_prealloc();
   health_cfg_load();
 
+  if (strcmp(argv[1], "exec") == 0)
+    {
+      static char e_host[64];
+      static char e_port[8];
+      static char e_user[32];
+      static char e_pass[96];
+      static char e_out[256];
+      static char e_cmd[VELAOPS_CMD_LEN];
+      size_t e_used = 0;
+      int erc;
+
+      if (argc < 3)
+        {
+          printf("usage: velaops exec <command>\n");
+          return EXIT_FAILURE;
+        }
+
+      for (i = 2; i < argc; i++)
+        {
+          size_t len = strlen(argv[i]);
+
+          if (e_used + len + 2 >= sizeof(e_cmd))
+            {
+              printf("velaops: exec command too long\n");
+              return EXIT_FAILURE;
+            }
+
+          if (e_used > 0)
+            {
+              e_cmd[e_used++] = ' ';
+            }
+
+          memcpy(e_cmd + e_used, argv[i], len);
+          e_used += len;
+        }
+
+      e_cmd[e_used] = '\0';
+      e_out[0] = '\0';
+
+      velaops_conf_get("ssh_host", e_host, sizeof(e_host));
+      velaops_conf_get("ssh_port", e_port, sizeof(e_port));
+      velaops_conf_get("ssh_user", e_user, sizeof(e_user));
+      velaops_conf_get("ssh_pass", e_pass, sizeof(e_pass));
+
+      if (e_host[0] == '\0')
+        {
+          printf("velaops: no ssh_host configured\n");
+          return EXIT_FAILURE;
+        }
+
+      erc = velaops_ssh_exec(e_host,
+                             e_port[0] != '\0' ? e_port : "22",
+                             e_user[0] != '\0' ? e_user : "root",
+                             e_pass, e_cmd, e_out, sizeof(e_out));
+      printf("velaops: exec rc=%d out=%s%c", erc, e_out, 10);
+      return erc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
   if (strcmp(argv[1], "provision") == 0)
     {
       return velaops_prov_run() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -1673,6 +1898,7 @@ online_ok:
       int long_fired = 0;
       int key_short_seen[4] = { 0, 0, 0, 0 };
       int key_long_seen = 0;
+      int key_mute_seen = 0;
       bool key_thread_ok = false;
       pthread_t key_tid;
       uint32_t now;
@@ -1713,6 +1939,8 @@ online_ok:
             }
 
           g_key_long_ok = 0;
+          g_key_mute_req = 0;
+          key_mute_seen = 0;
           g_key_thread_stop = 0;
 
           {
@@ -1741,6 +1969,7 @@ online_ok:
         {
           int crit;
           int just_alert = 0;
+          int ai_selected = 0;
 
           if (velaops_ssh_collect(host, port, user, pass, svcs, ports,
                                   &snap) == 0)
@@ -1785,6 +2014,13 @@ online_ok:
               show_alert = 1;
               muted = 0;
               just_alert = 1;
+
+              if (run)
+                {
+                  board_hwtest_gpio_write(1, 1);
+                  board_hwtest_gpio_write(0, 1);
+                }
+
               printf("velaops: alert score=%d crit=%d reason=%s%c",
                      g_hres.total, g_hres.critical, g_hres.reason, 10);
             }
@@ -1795,45 +2031,11 @@ online_ok:
               alert = 0;
               show_alert = 0;
               muted = 0;
+              state.action_state = "IDLE";
+              state.action_result = "已恢复";
+              state.ai_command = NULL;
               printf("velaops: health recovered score=%d%c",
                      g_hres.total, 10);
-            }
-
-          target[0] = '\0';
-          action_kind = 0;
-
-          if (snap.online)
-            {
-              if (pick_repair_target(svcs, repair, &snap, target,
-                                     sizeof(target)))
-                {
-                  action_kind = 1;
-                }
-              else if (kill_allowed())
-                {
-                  strlcpy(target, g_hres.kill_name, sizeof(target));
-                  action_kind = 2;
-                }
-            }
-
-          if (alert)
-            {
-              snprintf(alert_text, sizeof(alert_text),
-                       "%s 健康分 %d", g_hres.reason, g_hres.total);
-            }
-
-          if (just_alert)
-            {
-              state.action_state = "WAITING";
-              state.action_service = target[0] != '\0' ? target : "-";
-              state.action_result = action_kind == 2 ?
-                                    "HOLD BOOT 2S KILL" :
-                                    (action_kind == 1 ?
-                                     "HOLD BOOT 2S RESTART" :
-                                     "NO ALLOWED ACTION");
-
-              printf("velaops: alert target=%s kind=%d\n",
-                     target[0] != '\0' ? target : "none", action_kind);
             }
 
           if ((just_alert || llm_tick <= 0) && snap.online)
@@ -1841,14 +2043,15 @@ online_ok:
               static char l_url[128];
               static char l_model[64];
               static char l_key[128];
-              static char l_prompt[320];
-              static char l_ans[384];
+              static char l_prompt[640];
+              static char l_ans[512];
 
               velaops_conf_get("llm_url", l_url, sizeof(l_url));
               velaops_conf_get("llm_model", l_model, sizeof(l_model));
               velaops_conf_get("llm_key", l_key, sizeof(l_key));
 
               llm_tick = 6;
+              g_ai_valid = 0;
 
               if (l_key[0] == '\0')
                 {
@@ -1856,26 +2059,44 @@ online_ok:
                 }
               else
                 {
-                  if (run)
-                    {
-                      board_hwtest_gpio_write(1, 0);
-                    }
-
                   snprintf(l_prompt, sizeof(l_prompt),
-                           "服务器 %s 健康分 %d/100，CPU %d%% 内存 %d%% "
-                           "磁盘 %d%%，失败单元 %d 个，监听端口 %d 个。"
-                           "主要问题：%s。TOP 进程 %s 占用 %.0f%%。"
-                           "用一句中文给出最重要的运维建议。",
+                           "你是服务器运维 agent。服务器 %s 健康分 %d/100，"
+                           "CPU %d%% 内存 %d%% 磁盘 %d%%，失败单元 %d 个，"
+                           "主要问题：%s，TOP 进程 %s 占用 %.0f%%。"
+                           "只输出一行 JSON，不要 Markdown："
+                           "{\"action\":\"none|kill|restart|start|stop|exec\","
+                           "\"target\":\"进程名或systemd单元\","
+                           "\"command\":\"单行shell命令\","
+                           "\"reason\":\"简短中文理由\"}。"
+                           "kill 的 target 是进程精确名；restart/start/stop "
+                           "的 target 是单元名；exec 时 command 为要执行的命令；"
+                           "没有必要时 action 填 none。",
                            host, g_hres.total, (int)(snap.cpu + 0.5f),
                            (int)(snap.mem + 0.5f), (int)(snap.disk + 0.5f),
-                           snap.svc_failed, snap.port_count, g_hres.reason,
-                           snap.top_name, (double)snap.top_cpu);
+                           snap.svc_failed, g_hres.reason, snap.top_name,
+                           (double)snap.top_cpu);
 
                   if (velaops_llm_chat(l_url, l_model, l_key, l_prompt,
                                        l_ans, sizeof(l_ans)) == 0)
                     {
                       printf("velaops: llm ok: %s%c", l_ans, 10);
-                      strlcpy(g_llm_text, l_ans, sizeof(g_llm_text));
+
+                      if (parse_ai_action(l_ans))
+                        {
+                          printf("velaops: ai action=%s target=%s cmd=%s%c",
+                                 g_ai_action, g_ai_target, g_ai_command, 10);
+                        }
+
+                      if (g_ai_valid && g_ai_reason[0] != '\0')
+                        {
+                          strlcpy(g_llm_text, g_ai_reason,
+                                  sizeof(g_llm_text));
+                        }
+                      else
+                        {
+                          strlcpy(g_llm_text, l_ans, sizeof(g_llm_text));
+                        }
+
                       state.summary = g_llm_text;
                     }
                   else
@@ -1885,9 +2106,153 @@ online_ok:
                 }
             }
 
+          target[0] = '\0';
+          action_kind = ACT_NONE;
+          ai_selected = 0;
+          strlcpy(g_act_verb, "restart", sizeof(g_act_verb));
+          g_act_command[0] = '\0';
+
+          if (snap.online)
+            {
+              if (g_ai_valid && strcmp(g_ai_action, "none") != 0)
+                {
+                  if (strcmp(g_ai_action, "kill") == 0)
+                    {
+                      if (name_chars_ok(g_ai_target, 0) &&
+                          velaops_health_csv_has(g_kill_allow, g_ai_target))
+                        {
+                          action_kind = ACT_KILL;
+                          strlcpy(target, g_ai_target, sizeof(target));
+                          ai_selected = 1;
+                        }
+                    }
+                  else if (strcmp(g_ai_action, "restart") == 0 ||
+                           strcmp(g_ai_action, "start") == 0 ||
+                           strcmp(g_ai_action, "stop") == 0)
+                    {
+                      if (name_chars_ok(g_ai_target, 1) &&
+                          velaops_health_csv_has(repair, g_ai_target))
+                        {
+                          action_kind = ACT_UNIT;
+                          strlcpy(target, g_ai_target, sizeof(target));
+                          strlcpy(g_act_verb, g_ai_action,
+                                  sizeof(g_act_verb));
+                          ai_selected = 1;
+                        }
+                    }
+                  else if (strcmp(g_ai_action, "exec") == 0)
+                    {
+                      if (command_ok(g_ai_command))
+                        {
+                          action_kind = ACT_EXEC;
+                          strlcpy(g_act_command, g_ai_command,
+                                  sizeof(g_act_command));
+                          ai_selected = 1;
+                        }
+                      else if (g_ai_command[0] != '\0')
+                        {
+                          printf("velaops: ai command rejected%c", 10);
+                        }
+                    }
+
+                  if (!ai_selected)
+                    {
+                      printf("velaops: ai action %s not allowed%c",
+                             g_ai_action, 10);
+                    }
+                }
+
+              if (action_kind == ACT_NONE)
+                {
+                  if (pick_repair_target(svcs, repair, &snap, target,
+                                         sizeof(target)))
+                    {
+                      action_kind = ACT_UNIT;
+                      strlcpy(g_act_verb, "restart", sizeof(g_act_verb));
+                    }
+                  else if (kill_allowed())
+                    {
+                      strlcpy(target, g_hres.kill_name, sizeof(target));
+                      action_kind = ACT_KILL;
+                    }
+                }
+            }
+
+          if (alert)
+            {
+              if (action_kind == ACT_EXEC)
+                {
+                  snprintf(alert_text, sizeof(alert_text),
+                           "健康分 %d %s执行命令", g_hres.total,
+                           ai_selected ? "AI建议" : "建议");
+                }
+              else if (action_kind == ACT_KILL)
+                {
+                  snprintf(alert_text, sizeof(alert_text),
+                           "健康分 %d %s终止 %s", g_hres.total,
+                           ai_selected ? "AI建议" : "建议", target);
+                }
+              else if (action_kind == ACT_UNIT)
+                {
+                  snprintf(alert_text, sizeof(alert_text),
+                           "健康分 %d %s%s %s", g_hres.total,
+                           ai_selected ? "AI建议" : "建议",
+                           strcmp(g_act_verb, "stop") == 0 ? "停止" :
+                           (strcmp(g_act_verb, "start") == 0 ? "启动" :
+                            "重启"), target);
+                }
+              else
+                {
+                  snprintf(alert_text, sizeof(alert_text),
+                           "%s 健康分 %d", g_hres.reason, g_hres.total);
+                }
+            }
+
+          if (just_alert)
+            {
+              page = 5;
+              state.cmd_output = NULL;
+            }
+
+          if (alert && (just_alert ||
+                        (state.action_state != NULL &&
+                         strcmp(state.action_state, "WAITING") == 0)))
+            {
+              state.action_state = "WAITING";
+              state.action_service = action_kind == ACT_EXEC ? "AI命令" :
+                                     (target[0] != '\0' ? target : "-");
+              state.action_result = action_kind == ACT_NONE ?
+                                    "无可执行动作" :
+                                    (ai_selected ? "AI建议·长按OK" :
+                                                   "规则建议·长按OK");
+              state.ai_suggested = ai_selected;
+              state.ai_reason = g_ai_reason[0] != '\0' ?
+                                g_ai_reason : g_hres.reason;
+              state.ai_command = action_kind == ACT_EXEC ? g_act_command :
+                                 NULL;
+
+              printf("velaops: target=%s kind=%d ai=%d%c",
+                     target[0] != '\0' ? target : "-", action_kind,
+                     ai_selected, 10);
+            }
+
           if (llm_tick > 0)
             {
               llm_tick--;
+            }
+
+          if (key_mute_seen != g_key_mute_req)
+            {
+              key_mute_seen = g_key_mute_req;
+
+              if (alert)
+                {
+                  muted = 1;
+                  show_alert = 0;
+                  printf("velaops: mute%c", 10);
+                  velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                  lcd_flush(fd, &vi, fb);
+                }
             }
 
           now = hw_ms();
@@ -1932,6 +2297,20 @@ online_ok:
 
               now = hw_ms();
 
+              if (key_mute_seen != g_key_mute_req)
+                {
+                  key_mute_seen = g_key_mute_req;
+
+                  if (alert)
+                    {
+                      muted = 1;
+                      show_alert = 0;
+                      printf("velaops: mute%c", 10);
+                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                      lcd_flush(fd, &vi, fb);
+                    }
+                }
+
               for (i = 0; i < 4; i++)
                 {
                   while (key_short_seen[i] != g_key_short[i])
@@ -1953,8 +2332,15 @@ online_ok:
                         }
                       else if (i == 2)
                         {
-                          next = 0;
-                          show_alert = 0;
+                          if (show_alert)
+                            {
+                              show_alert = 0;
+                              muted = 1;
+                            }
+                          else
+                            {
+                              next = 0;
+                            }
                         }
                       else
                         {
@@ -2031,78 +2417,136 @@ online_ok:
                   long_fired = 0;
                 }
 
-              if (do_action && alert && action_kind != 0 &&
+              if (do_action && alert && action_kind != ACT_NONE &&
                   state.action_state != NULL &&
                   strcmp(state.action_state, "WAITING") == 0)
                 {
-                  int fixed = 0;
-                  int idx;
-
-                  printf("velaops: approved %s %s\n",
-                         action_kind == 2 ? "kill" : "restart", target);
-
-                  state.action_state = "RUNNING";
-                  state.action_result = target;
-                  velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
-                  lcd_flush(fd, &vi, fb);
-                  board_hwtest_gpio_write(1, 0);
-
-                  if (action_kind == 2)
+                  if (action_kind == ACT_EXEC && (show_alert || page != 5))
                     {
-                      rc = velaops_ssh_kill(host, port, user, pass, target);
+                      show_alert = 0;
+                      page = 5;
+                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                      lcd_flush(fd, &vi, fb);
+                      printf("velaops: review command before approve%c", 10);
                     }
                   else
                     {
-                      rc = velaops_ssh_restart(host, port, user, pass, target);
-                    }
+                      int fixed = 0;
+                      int idx = -1;
 
-                  if (velaops_ssh_collect(host, port, user, pass, svcs, ports,
-                                          &snap) == 0)
-                    {
-                      apply_snapshot(&state, &snap, host);
+                      printf("velaops: approved %s %s\n",
+                             action_kind == ACT_EXEC ? "exec" :
+                             (action_kind == ACT_KILL ? "kill" : g_act_verb),
+                             action_kind == ACT_EXEC ? g_act_command : target);
 
-                      if (action_kind == 2)
+                      state.action_state = "RUNNING";
+                      state.action_result = action_kind == ACT_EXEC ?
+                                            "执行中" : target;
+                      state.cmd_output = NULL;
+                      velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
+                      lcd_flush(fd, &vi, fb);
+                      board_hwtest_gpio_write(1, 0);
+
+                      g_cmd_output[0] = '\0';
+
+                      if (action_kind == ACT_EXEC)
                         {
-                          fixed = strcmp(snap.top_name, target) != 0 ||
-                                  snap.top_cpu < 50.0f;
+                          rc = velaops_ssh_exec(host, port, user, pass,
+                                                g_act_command, g_cmd_output,
+                                                sizeof(g_cmd_output));
+                        }
+                      else if (action_kind == ACT_KILL)
+                        {
+                          rc = velaops_ssh_kill(host, port, user, pass,
+                                                target);
                         }
                       else
                         {
-                          idx = csv_find_index(svcs, target,
-                                               strlen(target));
-                          fixed = idx >= 0 && idx < snap.watch_count &&
-                                  snap.watch_active[idx];
+                          rc = velaops_ssh_unit(host, port, user, pass,
+                                                target, g_act_verb);
                         }
 
-                      if (rc == 0 && fixed)
+                      if (velaops_ssh_collect(host, port, user, pass, svcs,
+                                              ports, &snap) == 0)
                         {
-                          state.action_state = "DONE";
-                          state.action_result = action_kind == 2 ?
-                            "KILLED AND VERIFIED" :
-                            "RESTARTED AND VERIFIED";
-                          alert = 0;
-                          show_alert = 0;
-                          muted = 0;
-                          alert_streak = 0;
+                          apply_snapshot(&state, &snap, host);
+
+                          if (action_kind == ACT_EXEC)
+                            {
+                              fixed = (rc == 0);
+                            }
+                          else if (action_kind == ACT_KILL)
+                            {
+                              fixed = strcmp(snap.top_name, target) != 0 ||
+                                      snap.top_cpu < 50.0f;
+                            }
+                          else
+                            {
+                              idx = csv_find_index(svcs, target,
+                                                   strlen(target));
+
+                              if (idx >= 0 && idx < snap.watch_count)
+                                {
+                                  fixed = strcmp(g_act_verb, "stop") == 0 ?
+                                          !snap.watch_active[idx] :
+                                          snap.watch_active[idx];
+                                }
+                              else
+                                {
+                                  fixed = (rc == 0);
+                                }
+                            }
+
+                          if (rc == 0 && fixed)
+                            {
+                              state.action_state = "DONE";
+                              state.action_result =
+                                action_kind == ACT_EXEC ? "DONE rc=0" :
+                                (action_kind == ACT_KILL ?
+                                 "KILLED AND VERIFIED" :
+                                 "UNIT ACTION VERIFIED");
+
+                              if (action_kind != ACT_EXEC)
+                                {
+                                  alert = 0;
+                                  show_alert = 0;
+                                  muted = 0;
+                                  alert_streak = 0;
+                                }
+                            }
+                          else if (rc == -2)
+                            {
+                              state.action_state = "FAILED";
+                              state.action_result = "BLOCKED BY POLICY";
+                            }
+                          else
+                            {
+                              state.action_state = "FAILED";
+                              state.action_result =
+                                action_kind == ACT_EXEC ? "EXEC FAILED" :
+                                (action_kind == ACT_KILL ?
+                                 "KILL FAILED" : "UNIT ACTION FAILED");
+                            }
                         }
                       else
                         {
                           state.action_state = "FAILED";
-                          state.action_result = action_kind == 2 ?
-                            "KILL FAILED" : "RESTART FAILED";
+                          state.action_result = "VERIFY COLLECT FAILED";
                         }
-                    }
-                  else
-                    {
-                      state.action_state = "FAILED";
-                      state.action_result = "VERIFY COLLECT FAILED";
-                    }
 
-                  page = 5;
-                  velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
-                  lcd_flush(fd, &vi, fb);
-                  printf("velaops: action %s state=%s\n",
-                         target, state.action_state);
+                      if (action_kind == ACT_EXEC)
+                        {
+                          state.cmd_output = g_cmd_output;
+                          printf("velaops: exec out: %s%c", g_cmd_output, 10);
+                        }
+
+                      page = 5;
+                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                      lcd_flush(fd, &vi, fb);
+                      printf("velaops: action %s state=%s\n",
+                             action_kind == ACT_EXEC ? "exec" : target,
+                             state.action_state);
+                    }
                 }
               else if (do_action && alert)
                 {

@@ -824,6 +824,241 @@ out:
   return status == 0 ? 0 : -1;
 }
 
+static int exec_command(const char *host, const char *port,
+                        const char *user, const char *pass,
+                        const char *cmd, char *out, size_t outsize,
+                        int *exit_status)
+{
+  LIBSSH2_SESSION *session = NULL;
+  LIBSSH2_CHANNEL *channel = NULL;
+  char chunk[128];
+  size_t total = 0;
+  int fd = -1;
+  int rc;
+  int status = -1;
+
+  if (out != NULL && outsize > 0)
+    {
+      out[0] = '\0';
+    }
+
+  if (open_authed_session(host, port, user, pass, &session, &fd) != 0)
+    {
+      return -1;
+    }
+
+  channel = libssh2_channel_open_session(session);
+  if (channel == NULL)
+    {
+      printf("velaops: exec channel failed%c", 10);
+      goto out;
+    }
+
+  rc = libssh2_channel_exec(channel, cmd);
+  if (rc != 0)
+    {
+      printf("velaops: exec start failed: %d%c", rc, 10);
+      goto out;
+    }
+
+  for (;;)
+    {
+      ssize_t n = libssh2_channel_read(channel, chunk, sizeof(chunk));
+
+      if (n > 0)
+        {
+          if (out != NULL && outsize > 1)
+            {
+              size_t keep = outsize - 1;
+
+              if ((size_t)n >= keep)
+                {
+                  memcpy(out, chunk + (size_t)n - keep, keep);
+                  total = keep;
+                }
+              else if (total + (size_t)n > keep)
+                {
+                  size_t drop = total + (size_t)n - keep;
+
+                  memmove(out, out + drop, total - drop);
+                  total -= drop;
+                  memcpy(out + total, chunk, (size_t)n);
+                  total += (size_t)n;
+                }
+              else
+                {
+                  memcpy(out + total, chunk, (size_t)n);
+                  total += (size_t)n;
+                }
+
+              out[total] = '\0';
+            }
+        }
+      else if (n == LIBSSH2_ERROR_EAGAIN)
+        {
+          continue;
+        }
+      else
+        {
+          break;
+        }
+    }
+
+  status = libssh2_channel_get_exit_status(channel);
+
+out:
+  if (channel != NULL)
+    {
+      libssh2_channel_free(channel);
+    }
+
+  if (session != NULL)
+    {
+      libssh2_session_disconnect(session, "bye");
+      libssh2_session_free(session);
+    }
+
+  if (fd >= 0)
+    {
+      close(fd);
+    }
+
+  if (exit_status != NULL)
+    {
+      *exit_status = status;
+    }
+
+  return status == 0 ? 0 : -1;
+}
+
+int velaops_ssh_unit(const char *host, const char *port,
+                     const char *user, const char *pass,
+                     const char *unit, const char *verb)
+{
+  char cmd[256];
+  int status = -1;
+
+  if (!unit_safe(unit) ||
+      (strcmp(verb, "start") != 0 && strcmp(verb, "stop") != 0 &&
+       strcmp(verb, "restart") != 0))
+    {
+      printf("velaops: invalid unit action\n");
+      return -1;
+    }
+
+  snprintf(cmd, sizeof(cmd),
+           "systemctl %s %s || sudo -n systemctl %s %s",
+           verb, unit, verb, unit);
+
+  exec_command(host, port, user, pass, cmd, NULL, 0, &status);
+  printf("velaops: unit %s %s status=%d%c", verb, unit, status, 10);
+  return status == 0 ? 0 : -1;
+}
+
+int velaops_ssh_command_blocked(const char *command)
+{
+  static const char *const bad[] =
+  {
+    "rm -rf /", "rm -fr /", "mkfs", ":(){", "of=/dev/",
+    "systemctl reboot", "systemctl poweroff", "systemctl halt",
+    " shutdown", " poweroff", " reboot", " halt"
+  };
+  char low[VELAOPS_CMD_LEN];
+  size_t i;
+  int n;
+
+  if (command == NULL)
+    {
+      return 1;
+    }
+
+  n = (int)strlen(command);
+  if (n <= 0 || n >= (int)sizeof(low))
+    {
+      return 1;
+    }
+
+  for (i = 0; i < (size_t)n; i++)
+    {
+      char c = command[i];
+
+      low[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+
+  low[n] = '\0';
+
+  for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+    {
+      const char *hit = strstr(low, bad[i]);
+
+      if (hit == NULL)
+        {
+          continue;
+        }
+
+      if ((strcmp(bad[i], "rm -rf /") == 0 ||
+           strcmp(bad[i], "rm -fr /") == 0) &&
+          hit[8] != '\0' && hit[8] != ' ' && hit[8] != '*')
+        {
+          continue;
+        }
+
+      printf("velaops: blocked command pattern '%s'%c", bad[i], 10);
+      return 1;
+    }
+
+  return 0;
+}
+
+int velaops_ssh_exec(const char *host, const char *port,
+                     const char *user, const char *pass,
+                     const char *command, char *out, size_t outsize)
+{
+  char escaped[2 * VELAOPS_CMD_LEN];
+  char cmd[2 * VELAOPS_CMD_LEN + 64];
+  size_t used = 0;
+  const char *p;
+  int status = -1;
+
+  if (command == NULL || command[0] == '\0' ||
+      strlen(command) >= VELAOPS_CMD_LEN)
+    {
+      return -1;
+    }
+
+  if (velaops_ssh_command_blocked(command))
+    {
+      printf("velaops: command rejected by local policy%c", 10);
+      return -2;
+    }
+
+  for (p = command; *p != '\0'; p++)
+    {
+      if (*p < 0x20 || *p > 0x7e)
+        {
+          printf("velaops: command has invalid characters\n");
+          return -1;
+        }
+
+      if (*p == '\'')
+        {
+          memcpy(escaped + used, "'\\''", 4);
+          used += 4;
+        }
+      else
+        {
+          escaped[used++] = *p;
+        }
+    }
+
+  escaped[used] = '\0';
+
+  snprintf(cmd, sizeof(cmd), "timeout 20 sh -c '%s' 2>&1", escaped);
+  exec_command(host, port, user, pass, cmd, out, outsize, &status);
+  printf("velaops: exec status=%d cmd=%s%c", status, command, 10);
+  return status == 0 ? 0 : -1;
+}
+
 int velaops_ssh_kill(const char *host, const char *port,
                      const char *user, const char *pass,
                      const char *name)

@@ -907,6 +907,7 @@ static void serve_page(int fd)
   used = snprintf(extra, sizeof(extra),
            "<fieldset><legend>设备 PIN</legend>"
            "<div class=sub>请输入屏幕上的 4 位 PIN</div>"
+           "<div class=sub>开机时按住 OK 或 BOOT 可进入配网</div>"
            "<input name=pin required inputmode=numeric maxlength=4></fieldset>"
            "<fieldset><legend>WiFi</legend>"
            "<label>附近网络</label>"
@@ -969,6 +970,8 @@ static void serve_page(int fd)
            "<fieldset><legend>整体监控与告警</legend>"
            "<div class=sub>默认监控整台服务器：systemd 失败单元、监听端口、"
            "资源与稳定性。以下字段均为可选细化。</div>"
+           "<div class=sub>AI 可建议 kill/重启/执行任意命令；"
+           "屏幕会显示完整命令，长按 OK 才执行。</div>"
            "<label>重点服务（逗号分隔）</label>"
            "<input name=services value=\"%s\">", esc);
 

@@ -74,6 +74,11 @@ typedef struct
   char top_name[20];
   float top_cpu;
 
+  int ai_suggested;
+  const char *ai_reason;
+  const char *ai_command;
+  const char *cmd_output;
+
   const char *alert_reason;
 
   const char *summary;          /* ASCII, wrapped by renderer */

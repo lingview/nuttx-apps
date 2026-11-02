@@ -12,6 +12,7 @@
 #define VELAOPS_MAX_PORTS   32
 #define VELAOPS_MAX_FAILED  5
 #define VELAOPS_NAME_LEN    20
+#define VELAOPS_CMD_LEN     200
 
 typedef struct
 {
@@ -79,6 +80,25 @@ int velaops_ssh_collect(const char *host, const char *port,
 int velaops_ssh_restart(const char *host, const char *port,
                         const char *user, const char *pass,
                         const char *service);
+
+/* start/stop/restart one systemd unit. Returns 0 on success. */
+
+int velaops_ssh_unit(const char *host, const char *port,
+                     const char *user, const char *pass,
+                     const char *unit, const char *verb);
+
+/* Run one non-interactive shell command (already vetted by the caller).
+ * Copies the tail of stdout/stderr into out. Returns 0 when exit status
+ * is zero.
+ */
+
+int velaops_ssh_exec(const char *host, const char *port,
+                     const char *user, const char *pass,
+                     const char *command, char *out, size_t outsize);
+
+/* 1 when the command matches the local destructive-pattern block list. */
+
+int velaops_ssh_command_blocked(const char *command);
 
 /* Terminate all processes with an exact name (already allow-listed).
  * Returns 0 when none are left running.

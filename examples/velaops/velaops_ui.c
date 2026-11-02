@@ -794,31 +794,94 @@ static void draw_rootcause(uint16_t *fb, int w, int h,
 static void draw_action(uint16_t *fb, int w, int h,
                         const velaops_ui_state_t *s)
 {
+  char lines[4][TEXT_LINE_MAX];
+  char buf[48];
   int waiting = s->action_state != NULL &&
                 strcmp(s->action_state, "WAITING") == 0;
+  int count;
+  int i;
+  int y;
 
   draw_text(fb, w, h, 10, 36, "处置", 2, COL_GREEN);
   fill_rect(fb, w, h, 8, 56, w - 16, 1, COL_BORDER);
 
-  draw_text(fb, w, h, 10, 66, "状态", 2, COL_DIM);
-  draw_text(fb, w, h, 60, 66, waiting ? "等待批准" : "空闲", 2,
-            waiting ? COL_AMBER : COL_DIM);
+  draw_text(fb, w, h, 10, 60, "状态", 1, COL_DIM);
+  draw_text(fb, w, h, 52, 60,
+            waiting ? "等待批准" :
+            (s->action_state != NULL ? s->action_state : "空闲"), 1,
+            waiting ? COL_AMBER : COL_TEXT);
 
-  draw_text(fb, w, h, 10, 88, "目标", 2, COL_DIM);
-  draw_text(fb, w, h, 60, 88,
-            s->action_service != NULL ? s->action_service : "-", 2,
+  draw_text(fb, w, h, 10, 71, "目标", 1, COL_DIM);
+  draw_text(fb, w, h, 52, 71,
+            s->action_service != NULL ? s->action_service : "-", 1,
             COL_TEXT);
 
-  draw_text(fb, w, h, 10, 110, "结果", 2, COL_DIM);
-  draw_text(fb, w, h, 60, 110,
-            s->action_result != NULL ? s->action_result : "-", 2,
+  draw_text(fb, w, h, 10, 82, "结果", 1, COL_DIM);
+  draw_text(fb, w, h, 52, 82,
+            s->action_result != NULL ? s->action_result : "-", 1,
             COL_TEXT);
 
-  fill_rect(fb, w, h, 8, 132, w - 16, 1, COL_BORDER);
+  fill_rect(fb, w, h, 8, 94, w - 16, 1, COL_BORDER);
 
-  draw_text(fb, w, h, 10, 140, "仅允许白名单操作", 2, COL_DIM);
-  draw_text(fb, w, h, 10, 164, "需按住OK 2秒批准", 2, COL_DIM);
-  draw_text(fb, w, h, 10, 188, "服务重启/终止高占用进程", 2, COL_DIM);
+  y = 98;
+
+  if (s->ai_reason != NULL && s->ai_reason[0] != '\0')
+    {
+      draw_text(fb, w, h, 10, y, s->ai_suggested ? "AI建议" : "判定理由",
+                1, s->ai_suggested ? COL_CYAN : COL_DIM);
+
+      count = wrap_text(s->ai_reason, lines,
+                        (s->ai_command != NULL &&
+                         s->ai_command[0] != '\0') ? 1 : 2,
+                        (w - 20) * 2);
+      for (i = 0; i < count; i++)
+        {
+          draw_text(fb, w, h, 10, y + 12 + i * 11, lines[i], 1, COL_TEXT);
+        }
+
+      y += 12 + count * 11 + 2;
+    }
+
+  if (s->ai_command != NULL && s->ai_command[0] != '\0')
+    {
+      draw_text(fb, w, h, 10, y, "待执行命令（长按OK）", 1, COL_AMBER);
+
+      count = wrap_text(s->ai_command, lines, 4, (w - 20) * 2);
+      for (i = 0; i < count; i++)
+        {
+          draw_text(fb, w, h, 10, y + 12 + i * 11, lines[i], 1, COL_TEXT);
+        }
+
+      y += 12 + count * 11 + 2;
+    }
+
+  if (s->cmd_output != NULL && s->cmd_output[0] != '\0')
+    {
+      draw_text(fb, w, h, 10, y, "输出", 1, COL_DIM);
+
+      count = wrap_text(s->cmd_output, lines, 1, (w - 20) * 2);
+      if (count > 0)
+        {
+          draw_text(fb, w, h, 46, y, lines[0], 1, COL_TEXT);
+        }
+
+      y += 11;
+    }
+
+  if (y > 194)
+    {
+      y = 194;
+    }
+
+  if (!waiting)
+    {
+      snprintf(buf, sizeof(buf), "健康分 %d", s->score);
+      draw_text(fb, w, h, 10, y + 4, buf, 1, COL_DIM);
+    }
+  else
+    {
+      draw_text(fb, w, h, 10, y + 4, "长按OK执行 BACK静音", 1, COL_AMBER);
+    }
 }
 
 static void draw_hwtest(uint16_t *fb, int w, int h,
@@ -949,7 +1012,7 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
     }
 
   draw_text_center(fb, width, height, width / 2, box_y + box_h - 22,
-                   "BACK关闭 长按OK处置", 2, COL_AMBER);
+                   "BACK关闭 UP/DN翻页 长按OK", 2, COL_AMBER);
   return 0;
 }
 
