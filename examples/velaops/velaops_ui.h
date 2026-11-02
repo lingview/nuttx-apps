@@ -98,6 +98,10 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
                             const char *title, const char *text,
                             int blink_phase);
 
+int velaops_ui_render_confirm(uint16_t *fb, int width, int height,
+                              const char *headline, const char *detail,
+                              int blink_phase);
+
 int velaops_ui_render_prov(uint16_t *fb, int width, int height,
                            const char *ssid, const char *pass,
                            const char *url, const char *pin);

@@ -102,6 +102,33 @@ static int lcd_flush(int fd, const struct fb_videoinfo_s *vi,
   return 0;
 }
 
+typedef struct
+{
+  uint16_t *fb;
+  struct fb_videoinfo_s vi;
+  int fd;
+  velaops_ui_state_t *state;
+  int *page;
+  int *show_alert;
+  int *alert;
+  int *muted;
+} velaops_key_ui_t;
+
+static velaops_key_ui_t g_keyui;
+static pthread_mutex_t g_ui_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void key_ui_render(void)
+{
+  if (g_keyui.fb == NULL || g_keyui.state == NULL)
+    {
+      return;
+    }
+
+  velaops_ui_render(g_keyui.fb, g_keyui.vi.xres, g_keyui.vi.yres,
+                    g_keyui.state, *g_keyui.page);
+  lcd_flush(g_keyui.fd, &g_keyui.vi, g_keyui.fb);
+}
+
 /****************************************************************************
  * Hardware self-test
  ****************************************************************************/
@@ -136,10 +163,13 @@ static uint32_t hw_ms(void)
   return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
-static volatile int g_key_short[4];
 static volatile int g_key_long_ok;
 static volatile int g_key_thread_stop;
-static volatile int g_key_mute_req;
+static volatile int g_ok_long_page;
+static volatile int g_ok_long_shown;
+static volatile int g_confirm;
+static char g_confirm_head[64];
+static char g_confirm_detail[220];
 
 static FAR void *key_thread(FAR void *arg)
 {
@@ -180,14 +210,67 @@ static FAR void *key_thread(FAR void *arg)
 
                       if (i == 2 || i == 3)
                         {
-                          g_key_mute_req++;
+                          pthread_mutex_lock(&g_ui_lock);
+
+                          if (g_keyui.alert != NULL && *g_keyui.alert)
+                            {
+                              *g_keyui.muted = 1;
+                            }
+
+                          pthread_mutex_unlock(&g_ui_lock);
                           board_hwtest_gpio_write(1, 0);
                           board_hwtest_gpio_write(0, 0);
                         }
                     }
                   else if (now - start[i] < 1000)
                     {
-                      g_key_short[i]++;
+                      pthread_mutex_lock(&g_ui_lock);
+
+                      if (g_keyui.page != NULL && g_keyui.fb != NULL)
+                        {
+                          if (g_confirm)
+                            {
+                              if (i == 2 || i == 3)
+                                {
+                                  g_confirm = 0;
+                                  *g_keyui.show_alert = 0;
+                                  printf("velaops: confirm cancelled%c", 10);
+                                  key_ui_render();
+                                }
+                            }
+                          else if (i == 0)
+                            {
+                              *g_keyui.page =
+                                (*g_keyui.page + VELAOPS_UI_PAGES - 1) %
+                                VELAOPS_UI_PAGES;
+                              *g_keyui.show_alert = 0;
+                              key_ui_render();
+                            }
+                          else if (i == 1)
+                            {
+                              *g_keyui.page =
+                                (*g_keyui.page + 1) % VELAOPS_UI_PAGES;
+                              *g_keyui.show_alert = 0;
+                              key_ui_render();
+                            }
+                          else if (*g_keyui.show_alert)
+                            {
+                              *g_keyui.show_alert = 0;
+                              *g_keyui.muted = 1;
+                              printf("velaops: mute%c", 10);
+                              key_ui_render();
+                            }
+                          else
+                            {
+                              *g_keyui.page = 0;
+                              key_ui_render();
+                            }
+
+                          printf("velaops: key%d short page=%d%c",
+                                 i + 1, *g_keyui.page, 10);
+                        }
+
+                      pthread_mutex_unlock(&g_ui_lock);
                     }
                 }
             }
@@ -197,6 +280,11 @@ static FAR void *key_thread(FAR void *arg)
 
               if (i == 2)
                 {
+                  pthread_mutex_lock(&g_ui_lock);
+                  g_ok_long_page = g_keyui.page != NULL ? *g_keyui.page : 5;
+                  g_ok_long_shown = g_keyui.show_alert != NULL ?
+                                    *g_keyui.show_alert : 0;
+                  pthread_mutex_unlock(&g_ui_lock);
                   g_key_long_ok++;
                 }
             }
@@ -1896,9 +1984,7 @@ online_ok:
       int llm_tick = 0;
       int press_ms = 0;
       int long_fired = 0;
-      int key_short_seen[4] = { 0, 0, 0, 0 };
       int key_long_seen = 0;
-      int key_mute_seen = 0;
       bool key_thread_ok = false;
       pthread_t key_tid;
       uint32_t now;
@@ -1932,22 +2018,26 @@ online_ok:
           board_hwtest_gpio_write(0, 0);
           board_hwtest_gpio_write(1, 0);
 
-          for (i = 0; i < 4; i++)
-            {
-              g_key_short[i] = 0;
-              key_short_seen[i] = 0;
-            }
-
           g_key_long_ok = 0;
-          g_key_mute_req = 0;
-          key_mute_seen = 0;
+          key_long_seen = 0;
           g_key_thread_stop = 0;
+          g_confirm = 0;
+
+          memset(&g_keyui, 0, sizeof(g_keyui));
+          g_keyui.fb = fb;
+          g_keyui.vi = vi;
+          g_keyui.fd = fd;
+          g_keyui.state = &state;
+          g_keyui.page = &page;
+          g_keyui.show_alert = &show_alert;
+          g_keyui.alert = &alert;
+          g_keyui.muted = &muted;
 
           {
             pthread_attr_t kattr;
 
             pthread_attr_init(&kattr);
-            pthread_attr_setstacksize(&kattr, 4096);
+            pthread_attr_setstacksize(&kattr, 5120);
 
             if (pthread_create(&key_tid, &kattr, key_thread, NULL) == 0)
               {
@@ -1975,7 +2065,9 @@ online_ok:
                                   &snap) == 0)
             {
               fail_streak = 0;
+              pthread_mutex_lock(&g_ui_lock);
               apply_snapshot(&state, &snap, host);
+              pthread_mutex_unlock(&g_ui_lock);
               printf("velaops: %s score=%d%s cpu=%d mem=%d disk=%d "
                      "fail=%d ports=%d top=%s/%d%%%c",
                      host, g_hres.total, g_hres.critical ? " CRIT" : "",
@@ -1989,7 +2081,9 @@ online_ok:
               fail_streak++;
               printf("velaops: collect failed for %s (%d)%c", host,
                      fail_streak, 10);
+              pthread_mutex_lock(&g_ui_lock);
               apply_snapshot(&state, &snap, host);
+              pthread_mutex_unlock(&g_ui_lock);
             }
 
           crit = snap.online ?
@@ -2014,11 +2108,20 @@ online_ok:
               show_alert = 1;
               muted = 0;
               just_alert = 1;
+              g_confirm = 0;
 
               if (run)
                 {
                   board_hwtest_gpio_write(1, 1);
                   board_hwtest_gpio_write(0, 1);
+
+                  snprintf(alert_text, sizeof(alert_text),
+                           "%s 健康分 %d", g_hres.reason, g_hres.total);
+                  pthread_mutex_lock(&g_ui_lock);
+                  velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
+                                          alert_text, blink & 1);
+                  lcd_flush(fd, &vi, fb);
+                  pthread_mutex_unlock(&g_ui_lock);
                 }
 
               printf("velaops: alert score=%d crit=%d reason=%s%c",
@@ -2031,9 +2134,12 @@ online_ok:
               alert = 0;
               show_alert = 0;
               muted = 0;
+              g_confirm = 0;
+              pthread_mutex_lock(&g_ui_lock);
               state.action_state = "IDLE";
               state.action_result = "已恢复";
               state.ai_command = NULL;
+              pthread_mutex_unlock(&g_ui_lock);
               printf("velaops: health recovered score=%d%c",
                      g_hres.total, 10);
             }
@@ -2087,6 +2193,8 @@ online_ok:
                                  g_ai_action, g_ai_target, g_ai_command, 10);
                         }
 
+                      pthread_mutex_lock(&g_ui_lock);
+
                       if (g_ai_valid && g_ai_reason[0] != '\0')
                         {
                           strlcpy(g_llm_text, g_ai_reason,
@@ -2098,6 +2206,7 @@ online_ok:
                         }
 
                       state.summary = g_llm_text;
+                      pthread_mutex_unlock(&g_ui_lock);
                     }
                   else
                     {
@@ -2210,14 +2319,17 @@ online_ok:
 
           if (just_alert)
             {
+              pthread_mutex_lock(&g_ui_lock);
               page = 5;
               state.cmd_output = NULL;
+              pthread_mutex_unlock(&g_ui_lock);
             }
 
           if (alert && (just_alert ||
                         (state.action_state != NULL &&
                          strcmp(state.action_state, "WAITING") == 0)))
             {
+              pthread_mutex_lock(&g_ui_lock);
               state.action_state = "WAITING";
               state.action_service = action_kind == ACT_EXEC ? "AI命令" :
                                      (target[0] != '\0' ? target : "-");
@@ -2230,6 +2342,7 @@ online_ok:
                                 g_ai_reason : g_hres.reason;
               state.ai_command = action_kind == ACT_EXEC ? g_act_command :
                                  NULL;
+              pthread_mutex_unlock(&g_ui_lock);
 
               printf("velaops: target=%s kind=%d ai=%d%c",
                      target[0] != '\0' ? target : "-", action_kind,
@@ -2239,20 +2352,6 @@ online_ok:
           if (llm_tick > 0)
             {
               llm_tick--;
-            }
-
-          if (key_mute_seen != g_key_mute_req)
-            {
-              key_mute_seen = g_key_mute_req;
-
-              if (alert)
-                {
-                  muted = 1;
-                  show_alert = 0;
-                  printf("velaops: mute%c", 10);
-                  velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
-                  lcd_flush(fd, &vi, fb);
-                }
             }
 
           now = hw_ms();
@@ -2268,12 +2367,22 @@ online_ok:
 
           if (!run)
             {
+              pthread_mutex_lock(&g_ui_lock);
               velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
               lcd_flush(fd, &vi, fb);
+              pthread_mutex_unlock(&g_ui_lock);
               break;
             }
 
-          if (alert && show_alert)
+          pthread_mutex_lock(&g_ui_lock);
+
+          if (g_confirm)
+            {
+              velaops_ui_render_confirm(fb, vi.xres, vi.yres,
+                                        g_confirm_head, g_confirm_detail,
+                                        blink & 1);
+            }
+          else if (alert && show_alert)
             {
               velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
                                       alert_text, blink & 1);
@@ -2284,11 +2393,14 @@ online_ok:
             }
 
           lcd_flush(fd, &vi, fb);
+          pthread_mutex_unlock(&g_ui_lock);
 
           for (tick = 0; tick < 250; tick++)
             {
               bool do_action = false;
               bool pressed = false;
+              bool long_shown = false;
+              int long_page = page;
 
               if (g_stop)
                 {
@@ -2297,76 +2409,12 @@ online_ok:
 
               now = hw_ms();
 
-              if (key_mute_seen != g_key_mute_req)
-                {
-                  key_mute_seen = g_key_mute_req;
-
-                  if (alert)
-                    {
-                      muted = 1;
-                      show_alert = 0;
-                      printf("velaops: mute%c", 10);
-                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
-                      lcd_flush(fd, &vi, fb);
-                    }
-                }
-
-              for (i = 0; i < 4; i++)
-                {
-                  while (key_short_seen[i] != g_key_short[i])
-                    {
-                      int next = page;
-
-                      key_short_seen[i]++;
-
-                      if (i == 0)
-                        {
-                          next = (page + VELAOPS_UI_PAGES - 1) %
-                                 VELAOPS_UI_PAGES;
-                          show_alert = 0;
-                        }
-                      else if (i == 1)
-                        {
-                          next = (page + 1) % VELAOPS_UI_PAGES;
-                          show_alert = 0;
-                        }
-                      else if (i == 2)
-                        {
-                          if (show_alert)
-                            {
-                              show_alert = 0;
-                              muted = 1;
-                            }
-                          else
-                            {
-                              next = 0;
-                            }
-                        }
-                      else
-                        {
-                          if (show_alert)
-                            {
-                              show_alert = 0;
-                              muted = 1;
-                            }
-                          else
-                            {
-                              next = 0;
-                            }
-                        }
-
-                      page = next;
-                      printf("velaops: key%d short page=%d%c", i + 1, page,
-                             10);
-                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
-                      lcd_flush(fd, &vi, fb);
-                    }
-                }
-
               if (key_long_seen != g_key_long_ok)
                 {
                   key_long_seen = g_key_long_ok;
                   do_action = true;
+                  long_shown = g_ok_long_shown;
+                  long_page = g_ok_long_page;
                   printf("velaops: key3 long%c", 10);
                 }
 
@@ -2388,6 +2436,8 @@ online_ok:
                     {
                       long_fired = 1;
                       do_action = true;
+                      long_shown = show_alert;
+                      long_page = page;
                     }
                 }
               else
@@ -2399,6 +2449,8 @@ online_ok:
 
                   if (press_ms > 0 && press_ms < 1000)
                     {
+                      pthread_mutex_lock(&g_ui_lock);
+
                       if (show_alert)
                         {
                           show_alert = 0;
@@ -2411,6 +2463,7 @@ online_ok:
 
                       velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
                       lcd_flush(fd, &vi, fb);
+                      pthread_mutex_unlock(&g_ui_lock);
                     }
 
                   press_ms = 0;
@@ -2421,30 +2474,66 @@ online_ok:
                   state.action_state != NULL &&
                   strcmp(state.action_state, "WAITING") == 0)
                 {
-                  if (action_kind == ACT_EXEC && (show_alert || page != 5))
+                  if (!g_confirm && (long_shown || long_page != 5))
                     {
+                      const char *reason = g_ai_reason[0] != '\0' ?
+                                           g_ai_reason : g_hres.reason;
+
+                      if (action_kind == ACT_EXEC)
+                        {
+                          snprintf(g_confirm_head, sizeof(g_confirm_head),
+                                   "AI建议执行命令");
+                          snprintf(g_confirm_detail, sizeof(g_confirm_detail),
+                                   "%s", g_act_command);
+                        }
+                      else if (action_kind == ACT_KILL)
+                        {
+                          snprintf(g_confirm_head, sizeof(g_confirm_head),
+                                   "AI建议终止进程");
+                          snprintf(g_confirm_detail, sizeof(g_confirm_detail),
+                                   "目标：%s\n理由：%s", target, reason);
+                        }
+                      else
+                        {
+                          snprintf(g_confirm_head, sizeof(g_confirm_head),
+                                   "AI建议%s服务",
+                                   strcmp(g_act_verb, "stop") == 0 ? "停止" :
+                                   (strcmp(g_act_verb, "start") == 0 ?
+                                    "启动" : "重启"));
+                          snprintf(g_confirm_detail, sizeof(g_confirm_detail),
+                                   "目标：%s\n理由：%s", target, reason);
+                        }
+
+                      g_confirm = 1;
                       show_alert = 0;
-                      page = 5;
-                      velaops_ui_render(fb, vi.xres, vi.yres, &state, page);
+                      pthread_mutex_lock(&g_ui_lock);
+                      velaops_ui_render_confirm(fb, vi.xres, vi.yres,
+                                                g_confirm_head,
+                                                g_confirm_detail,
+                                                blink & 1);
                       lcd_flush(fd, &vi, fb);
-                      printf("velaops: review command before approve%c", 10);
+                      pthread_mutex_unlock(&g_ui_lock);
+                      printf("velaops: confirm pending%c", 10);
                     }
                   else
                     {
                       int fixed = 0;
                       int idx = -1;
 
+                      g_confirm = 0;
                       printf("velaops: approved %s %s\n",
                              action_kind == ACT_EXEC ? "exec" :
                              (action_kind == ACT_KILL ? "kill" : g_act_verb),
                              action_kind == ACT_EXEC ? g_act_command : target);
 
+                      pthread_mutex_lock(&g_ui_lock);
                       state.action_state = "RUNNING";
                       state.action_result = action_kind == ACT_EXEC ?
                                             "执行中" : target;
                       state.cmd_output = NULL;
                       velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
                       lcd_flush(fd, &vi, fb);
+                      pthread_mutex_unlock(&g_ui_lock);
                       board_hwtest_gpio_write(1, 0);
 
                       g_cmd_output[0] = '\0';
@@ -2469,6 +2558,7 @@ online_ok:
                       if (velaops_ssh_collect(host, port, user, pass, svcs,
                                               ports, &snap) == 0)
                         {
+                          pthread_mutex_lock(&g_ui_lock);
                           apply_snapshot(&state, &snap, host);
 
                           if (action_kind == ACT_EXEC)
@@ -2530,6 +2620,7 @@ online_ok:
                         }
                       else
                         {
+                          pthread_mutex_lock(&g_ui_lock);
                           state.action_state = "FAILED";
                           state.action_result = "VERIFY COLLECT FAILED";
                         }
@@ -2546,10 +2637,12 @@ online_ok:
                       printf("velaops: action %s state=%s\n",
                              action_kind == ACT_EXEC ? "exec" : target,
                              state.action_state);
+                      pthread_mutex_unlock(&g_ui_lock);
                     }
                 }
               else if (do_action && alert)
                 {
+                  g_confirm = 0;
                   show_alert = 0;
                   muted = 1;
                 }
@@ -2565,12 +2658,27 @@ online_ok:
                                           ((now / 250) & 1));
                 }
 
-              if (alert && show_alert && (tick % 25) == 24)
+              if ((g_confirm || (alert && show_alert)) &&
+                  (tick % 25) == 24)
                 {
                   blink++;
-                  velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
-                                          alert_text, blink & 1);
+                  pthread_mutex_lock(&g_ui_lock);
+
+                  if (g_confirm)
+                    {
+                      velaops_ui_render_confirm(fb, vi.xres, vi.yres,
+                                                g_confirm_head,
+                                                g_confirm_detail,
+                                                blink & 1);
+                    }
+                  else
+                    {
+                      velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
+                                              alert_text, blink & 1);
+                    }
+
                   lcd_flush(fd, &vi, fb);
+                  pthread_mutex_unlock(&g_ui_lock);
                 }
 
               usleep(20000);
@@ -2585,6 +2693,8 @@ online_ok:
           g_key_thread_stop = 1;
           pthread_join(key_tid, NULL);
         }
+
+      g_keyui.fb = NULL;
 
       if (run)
         {

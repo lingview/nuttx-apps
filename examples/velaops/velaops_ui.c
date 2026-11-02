@@ -1016,6 +1016,58 @@ int velaops_ui_render_alert(uint16_t *fb, int width, int height,
   return 0;
 }
 
+int velaops_ui_render_confirm(uint16_t *fb, int width, int height,
+                              const char *headline, const char *detail,
+                              int blink_phase)
+{
+  char lines[5][TEXT_LINE_MAX];
+  int box_x = 10;
+  int box_y = 34;
+  int box_w;
+  int box_h = 176;
+  uint16_t border = blink_phase ? COL_AMBER : COL_RED;
+  int count;
+  int i;
+
+  if (fb == NULL || headline == NULL || detail == NULL)
+    {
+      return -1;
+    }
+
+  box_w = width - 20;
+
+  fill_rect(fb, width, height, 0, 0, width, height, COL_BG);
+  fill_rect(fb, width, height, box_x, box_y, box_w, box_h, COL_PANEL);
+  fill_rect(fb, width, height, box_x, box_y, box_w, 2, border);
+  fill_rect(fb, width, height, box_x, box_y + box_h - 2, box_w, 2, border);
+  fill_rect(fb, width, height, box_x, box_y, 2, box_h, border);
+  fill_rect(fb, width, height, box_x + box_w - 2, box_y, 2, box_h, border);
+
+  draw_text_center(fb, width, height, width / 2, box_y + 10,
+                   "确认执行", 2, COL_RED);
+
+  count = wrap_text(headline, lines, 2, (width - 44) * 2);
+  for (i = 0; i < count; i++)
+    {
+      draw_text(fb, width, height, box_x + 12, box_y + 36 + i * 12,
+                lines[i], 1, COL_TEXT);
+    }
+
+  fill_rect(fb, width, height, box_x + 10, box_y + 62, box_w - 20, 1,
+            COL_BORDER);
+
+  count = wrap_text(detail, lines, 5, (width - 44) * 2);
+  for (i = 0; i < count; i++)
+    {
+      draw_text(fb, width, height, box_x + 12, box_y + 70 + i * 12,
+                lines[i], 1, COL_CYAN);
+    }
+
+  draw_text_center(fb, width, height, width / 2, box_y + box_h - 18,
+                   "长按OK确认执行  BACK取消", 1, COL_AMBER);
+  return 0;
+}
+
 int velaops_ui_render_prov(uint16_t *fb, int width, int height,
                            const char *ssid, const char *pass,
                            const char *url, const char *pin)
