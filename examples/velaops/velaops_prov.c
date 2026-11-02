@@ -393,6 +393,14 @@ static int save_config(const char *body)
   char services[160];
   char ports[160];
   char repair[160];
+  char thr_cpu[8];
+  char thr_mem[8];
+  char thr_disk[8];
+  char alert_score[8];
+  char recover_score[8];
+  char ignore_ports[64];
+  char ignore_units[96];
+  char kill_allow[64];
   char port[16];
   char static_ip[32];
   char static_gw[32];
@@ -409,6 +417,14 @@ static int save_config(const char *body)
   form_get(body, "services", services, sizeof(services));
   form_get(body, "ports", ports, sizeof(ports));
   form_get(body, "repair", repair, sizeof(repair));
+  form_get(body, "thr_cpu", thr_cpu, sizeof(thr_cpu));
+  form_get(body, "thr_mem", thr_mem, sizeof(thr_mem));
+  form_get(body, "thr_disk", thr_disk, sizeof(thr_disk));
+  form_get(body, "alert_score", alert_score, sizeof(alert_score));
+  form_get(body, "recover_score", recover_score, sizeof(recover_score));
+  form_get(body, "ignore_ports", ignore_ports, sizeof(ignore_ports));
+  form_get(body, "ignore_units", ignore_units, sizeof(ignore_units));
+  form_get(body, "kill_allow", kill_allow, sizeof(kill_allow));
   form_get(body, "ssh_port", port, sizeof(port));
   form_get(body, "static_ip", static_ip, sizeof(static_ip));
   form_get(body, "static_gw", static_gw, sizeof(static_gw));
@@ -437,12 +453,22 @@ static int save_config(const char *body)
                  "services=%s\n"
                  "ports=%s\n"
                  "repair=%s\n"
+                 "thr_cpu=%s\n"
+                 "thr_mem=%s\n"
+                 "thr_disk=%s\n"
+                 "alert_score=%s\n"
+                 "recover_score=%s\n"
+                 "ignore_ports=%s\n"
+                 "ignore_units=%s\n"
+                 "kill_allow=%s\n"
                  "static_ip=%s\n"
                  "static_gw=%s\n"
                  "static_mask=%s\n",
                  fields[0], fields[1], fields[2], fields[3],
                  fields[4], fields[5], port, fields[6], fields[7],
                  services, ports, repair,
+                 thr_cpu, thr_mem, thr_disk, alert_score, recover_score,
+                 ignore_ports, ignore_units, kill_allow,
                  static_ip, static_gw, static_mask);
 
   if (len <= 0 || len >= (int)sizeof(file))
@@ -708,9 +734,9 @@ static void scan_aps(int run)
 
 static void serve_page(int fd)
 {
-  char extra[4096];
+  static char extra[6144];
   char resp[256];
-  char esc[80];
+  char esc[160];
   char v_ssid[64];
   char v_wpass[80];
   char v_url[128];
@@ -723,6 +749,14 @@ static void serve_page(int fd)
   char v_svcs[96];
   char v_ports[64];
   char v_repair[96];
+  char v_thr_cpu[8];
+  char v_thr_mem[8];
+  char v_thr_disk[8];
+  char v_alert[8];
+  char v_recover[8];
+  char v_ign_ports[64];
+  char v_ign_units[96];
+  char v_kill[64];
   char v_sip[32];
   char v_sgw[32];
   char v_smask[32];
@@ -744,6 +778,14 @@ static void serve_page(int fd)
   v_svcs[0] = 0;
   v_ports[0] = 0;
   v_repair[0] = 0;
+  v_thr_cpu[0] = 0;
+  v_thr_mem[0] = 0;
+  v_thr_disk[0] = 0;
+  v_alert[0] = 0;
+  v_recover[0] = 0;
+  v_ign_ports[0] = 0;
+  v_ign_units[0] = 0;
+  v_kill[0] = 0;
   v_sip[0] = 0;
   v_sgw[0] = 0;
   v_smask[0] = 0;
@@ -760,6 +802,14 @@ static void serve_page(int fd)
   velaops_conf_get("services", v_svcs, sizeof(v_svcs));
   velaops_conf_get("ports", v_ports, sizeof(v_ports));
   velaops_conf_get("repair", v_repair, sizeof(v_repair));
+  velaops_conf_get("thr_cpu", v_thr_cpu, sizeof(v_thr_cpu));
+  velaops_conf_get("thr_mem", v_thr_mem, sizeof(v_thr_mem));
+  velaops_conf_get("thr_disk", v_thr_disk, sizeof(v_thr_disk));
+  velaops_conf_get("alert_score", v_alert, sizeof(v_alert));
+  velaops_conf_get("recover_score", v_recover, sizeof(v_recover));
+  velaops_conf_get("ignore_ports", v_ign_ports, sizeof(v_ign_ports));
+  velaops_conf_get("ignore_units", v_ign_units, sizeof(v_ign_units));
+  velaops_conf_get("kill_allow", v_kill, sizeof(v_kill));
   velaops_conf_get("static_ip", v_sip, sizeof(v_sip));
   velaops_conf_get("static_gw", v_sgw, sizeof(v_sgw));
   velaops_conf_get("static_mask", v_smask, sizeof(v_smask));
@@ -802,6 +852,41 @@ static void serve_page(int fd)
   if (v_repair[0] == 0)
     {
       strcpy(v_repair, "nginx,php-fpm-81");
+    }
+
+  if (v_thr_cpu[0] == 0)
+    {
+      strcpy(v_thr_cpu, "85");
+    }
+
+  if (v_thr_mem[0] == 0)
+    {
+      strcpy(v_thr_mem, "85");
+    }
+
+  if (v_thr_disk[0] == 0)
+    {
+      strcpy(v_thr_disk, "85");
+    }
+
+  if (v_alert[0] == 0)
+    {
+      strcpy(v_alert, "70");
+    }
+
+  if (v_recover[0] == 0)
+    {
+      strcpy(v_recover, "80");
+    }
+
+  if (v_ign_ports[0] == 0)
+    {
+      strcpy(v_ign_ports, "111");
+    }
+
+  if (v_kill[0] == 0)
+    {
+      strcpy(v_kill, "cpu-burner");
     }
 
   if (v_sgw[0] == 0)
@@ -881,16 +966,51 @@ static void serve_page(int fd)
 
   scan_escape(v_svcs, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,
-           "<fieldset><legend>监控与白名单</legend>"
-           "<label>服务 (逗号分隔)</label><input name=services value=\"%s\">", esc);
+           "<fieldset><legend>整体监控与告警</legend>"
+           "<div class=sub>默认监控整台服务器：systemd 失败单元、监听端口、"
+           "资源与稳定性。以下字段均为可选细化。</div>"
+           "<label>重点服务（逗号分隔）</label>"
+           "<input name=services value=\"%s\">", esc);
 
   scan_escape(v_ports, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,
-           "<label>端口 (逗号分隔)</label><input name=ports value=\"%s\">", esc);
+           "<label>重点端口（逗号分隔）</label><input name=ports value=\"%s\">", esc);
 
   scan_escape(v_repair, esc, sizeof(esc));
   used += snprintf(extra + used, sizeof(extra) - (size_t)used,
-           "<label>允许重启的服务</label><input name=repair value=\"%s\">"
+           "<label>允许重启的服务白名单</label><input name=repair value=\"%s\">", esc);
+
+  scan_escape(v_thr_cpu, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>CPU 告警阈值 (%%)</label><input name=thr_cpu value=\"%s\">", esc);
+
+  scan_escape(v_thr_mem, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>内存告警阈值 (%%)</label><input name=thr_mem value=\"%s\">", esc);
+
+  scan_escape(v_thr_disk, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>磁盘告警阈值 (%%)</label><input name=thr_disk value=\"%s\">", esc);
+
+  scan_escape(v_alert, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>告警健康分</label><input name=alert_score value=\"%s\">", esc);
+
+  scan_escape(v_recover, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>恢复健康分</label><input name=recover_score value=\"%s\">", esc);
+
+  scan_escape(v_ign_ports, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>忽略端口（逗号分隔）</label><input name=ignore_ports value=\"%s\">", esc);
+
+  scan_escape(v_ign_units, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>忽略单元（逗号分隔）</label><input name=ignore_units value=\"%s\">", esc);
+
+  scan_escape(v_kill, esc, sizeof(esc));
+  used += snprintf(extra + used, sizeof(extra) - (size_t)used,
+           "<label>允许终止的进程名</label><input name=kill_allow value=\"%s\">"
            "</fieldset>"
            "<fieldset><legend>静态 IP（可选，DHCP 失败时使用）</legend>"
            "<label>IP</label><input name=static_ip value=\"%s\">"

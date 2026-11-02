@@ -15,6 +15,7 @@ MODULE    = $(CONFIG_EXAMPLES_VELAOPS)
 CFLAGS += ${INCDIR_PREFIX}$(CURDIR)
 
 MAINSRC = velaops_main.c
-CSRCS   = velaops_ui.c velaops_ssh.c velaops_prov.c velaops_llm.c velaops_conf.c velaops_pool.c
+CSRCS   = velaops_ui.c velaops_ssh.c velaops_prov.c velaops_llm.c \
+          velaops_conf.c velaops_health.c
 
 include $(APPDIR)/Application.mk

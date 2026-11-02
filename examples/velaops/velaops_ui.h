@@ -42,6 +42,40 @@ typedef struct
   int ports_ok;
   int alerts;
 
+  int score;
+  int s_avail;
+  int s_res;
+  int s_svc;
+  int s_net;
+  int s_stab;
+  int health_critical;
+
+  float swap;
+  float inode;
+  float temp;
+  int cores;
+  int zombies;
+
+  int svc_failed;
+  int svc_active_units;
+  char svc_failed0[24];
+  char svc_failed1[24];
+  char svc_failed2[24];
+
+  int port_count;
+  int port_new;
+  int port_lost;
+  int estab;
+  int tw;
+  unsigned long nic_err;
+  unsigned long nic_drop;
+
+  int top_pid;
+  char top_name[20];
+  float top_cpu;
+
+  const char *alert_reason;
+
   const char *summary;          /* ASCII, wrapped by renderer */
   const char *root_cause;
   const char *action_state;

@@ -26,6 +26,14 @@ int velaops_conf_save(const char *text);
 
 int velaops_conf_get(const char *key, char *out, size_t size);
 
+/* Replace or append one "key=value" entry. */
+
+int velaops_conf_set(const char *key, const char *value);
+
+/* Remove one entry. Returns 0 even when the key was absent. */
+
+int velaops_conf_del(const char *key);
+
 /* 1 when a valid configuration is stored. */
 
 int velaops_conf_present(void);

@@ -9,21 +9,54 @@
 #ifndef VELAOPS_SSH_H
 #define VELAOPS_SSH_H
 
+#define VELAOPS_MAX_PORTS   32
+#define VELAOPS_MAX_FAILED  5
+#define VELAOPS_NAME_LEN    20
+
 typedef struct
 {
   int online;
 
   float cpu;                    /* percent, -1 unknown */
   float mem;
+  float swap;
   float disk;
+  float inode;
   float load1;
+  float temp;
+  int cores;
 
-  int services_total;
-  int services_ok;
-  int svc_count;
-  unsigned char svc_active[8];
-  int ports_total;
-  int ports_ok;
+  int zombies;
+  int oom;                      /* OOM events in the last 5 minutes */
+
+  int svc_failed;               /* systemd failed units (not ignored) */
+  char failed[VELAOPS_MAX_FAILED][24];
+  int svc_active;               /* active systemd units */
+
+  int port_count;
+  char ports[VELAOPS_MAX_PORTS][6];
+  int estab;
+  int tw;
+  unsigned long nic_err;
+  unsigned long nic_drop;
+
+  int ntp;                      /* 1 synced, 0 not, -1 unknown */
+
+  int top_pid;
+  float top_cpu;
+  char top_name[VELAOPS_NAME_LEN];
+
+  unsigned long uptime_sec;
+  char bootid[40];
+
+  /* Optional "focus" checks kept from the old configuration. */
+
+  int watch_total;
+  int watch_ok;
+  int watch_count;
+  unsigned char watch_active[8];
+  int ports_watch_total;
+  int ports_watch_ok;
 
   char uptime[48];
   char clock[16];
@@ -46,5 +79,13 @@ int velaops_ssh_collect(const char *host, const char *port,
 int velaops_ssh_restart(const char *host, const char *port,
                         const char *user, const char *pass,
                         const char *service);
+
+/* Terminate all processes with an exact name (already allow-listed).
+ * Returns 0 when none are left running.
+ */
+
+int velaops_ssh_kill(const char *host, const char *port,
+                     const char *user, const char *pass,
+                     const char *name);
 
 #endif /* VELAOPS_SSH_H */

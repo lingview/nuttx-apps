@@ -411,6 +411,89 @@ int velaops_conf_get(const char *key, char *out, size_t size)
   return -1;
 }
 
+static int conf_rewrite(const char *skip_key, const char *set_key,
+                        const char *set_value)
+{
+  static char text[CONF_MAX_PAYLOAD + 1];
+  static char out[CONF_MAX_PAYLOAD + 1];
+  size_t skip_len = skip_key != NULL ? strlen(skip_key) : 0;
+  size_t olen = 0;
+  char *cur;
+  int src;
+
+  if (velaops_conf_load(text, sizeof(text)) < 0)
+    {
+      text[0] = '\0';
+    }
+
+  cur = text;
+
+  while (*cur != '\0')
+    {
+      char *nl = strchr(cur, '\n');
+      size_t len = nl != NULL ? (size_t)(nl - cur) : strlen(cur);
+      int drop = skip_key != NULL && len > skip_len &&
+                 cur[skip_len] == '=' &&
+                 strncmp(cur, skip_key, skip_len) == 0;
+
+      if (!drop)
+        {
+          if (olen + len + 1 >= sizeof(out))
+            {
+              return -1;
+            }
+
+          memcpy(out + olen, cur, len);
+          olen += len;
+          out[olen++] = '\n';
+        }
+
+      cur = nl != NULL ? nl + 1 : cur + len;
+    }
+
+  if (set_key != NULL)
+    {
+      size_t klen = strlen(set_key);
+      size_t vlen = strlen(set_value);
+
+      if (olen + klen + vlen + 3 > sizeof(out))
+        {
+          return -1;
+        }
+
+      memcpy(out + olen, set_key, klen);
+      olen += klen;
+      out[olen++] = '=';
+      memcpy(out + olen, set_value, vlen);
+      olen += vlen;
+      out[olen++] = '\n';
+    }
+
+  out[olen] = '\0';
+  src = olen > 0 ? velaops_conf_save(out) : velaops_conf_clear();
+  return src == 0 ? 0 : -1;
+}
+
+int velaops_conf_set(const char *key, const char *value)
+{
+  if (key == NULL || value == NULL)
+    {
+      return -1;
+    }
+
+  return conf_rewrite(key, key, value);
+}
+
+int velaops_conf_del(const char *key)
+{
+  if (key == NULL)
+    {
+      return -1;
+    }
+
+  return conf_rewrite(key, NULL, NULL);
+}
+
 int velaops_conf_present(void)
 {
   char buf[CONF_MAX_PAYLOAD + 1];

@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <time.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -40,6 +41,7 @@
 
 #include "velaops_ui.h"
 #include "velaops_ssh.h"
+#include "velaops_health.h"
 #include "velaops_prov.h"
 #include "velaops_llm.h"
 #include "velaops_conf.h"
@@ -114,6 +116,16 @@ extern int board_hwtest_gpio_init(void);
 extern int board_hwtest_gpio_read(int id);
 extern void board_hwtest_gpio_write(int id, int value);
 
+static volatile int g_stop;
+
+static void stop_handler(int signo)
+{
+  (void)signo;
+  board_hwtest_gpio_write(1, 0);
+  board_hwtest_gpio_write(0, 0);
+  g_stop = 1;
+}
+
 static uint32_t hw_ms(void)
 {
   struct timespec ts;
@@ -158,6 +170,10 @@ static int hwtest_run(void)
     {
       return EXIT_FAILURE;
     }
+
+  g_stop = 0;
+  signal(SIGTERM, stop_handler);
+  signal(SIGINT, stop_handler);
 
   printf("hwtest: lcd %ux%u\n", vi.xres, vi.yres);
 
@@ -207,6 +223,11 @@ static int hwtest_run(void)
   for (;;)
     {
       bool beep;
+
+      if (g_stop)
+        {
+          break;
+        }
 
       now = hw_ms();
 
@@ -307,23 +328,52 @@ static void demo_state(velaops_ui_state_t *s)
   s->cpu            = 96.0f;
   s->mem            = 61.0f;
   s->disk           = 44.0f;
+  s->swap           = 8.0f;
+  s->inode          = 21.0f;
+  s->temp           = 52.0f;
+  s->cores          = 8;
   s->load1          = 3.82f;
   s->services_total = 6;
   s->services_ok    = 5;
-  s->ports_total    = 3;
-  s->ports_ok       = 2;
+  s->ports_total    = 4;
+  s->ports_ok       = 3;
   s->alerts         = 1;
+
+  s->score          = 58;
+  s->s_avail        = 100;
+  s->s_res          = 72;
+  s->s_svc          = 65;
+  s->s_net          = 60;
+  s->s_stab         = 100;
+  s->health_critical = 0;
+
+  s->svc_failed     = 1;
+  s->svc_active_units = 134;
+  strlcpy(s->svc_failed0, "demo-web.service", sizeof(s->svc_failed0));
+
+  s->port_count     = 12;
+  s->port_new       = 2;
+  s->port_lost      = 1;
+  s->estab          = 24;
+  s->tw             = 7;
+  s->nic_err        = 0;
+  s->nic_drop       = 12;
+
+  s->top_pid        = 2311;
+  strlcpy(s->top_name, "cpu-burner", sizeof(s->top_name));
+  s->top_cpu        = 96.0f;
+
+  s->alert_reason   = "CPU 使用率 96%，TOP 进程 cpu-burner 占用 96%";
   s->summary =
-    "CPU SPIKED TO 96 PERCENT FOR THREE MINUTES. DEMO-WEB WAS RESTARTED "
-    "TWICE AND PORT 8080 WAS UNREACHABLE DURING THE SPIKE. OTHER "
-    "SERVICES STAYED HEALTHY AND DISK USAGE IS STABLE.";
+    "CPU 使用率持续 96%，主要是 cpu-burner 进程占满全部核心。"
+    "服务 demo-web 已失败，其余指标正常。建议先终止该进程并观察。";
   s->root_cause =
     "A RUNAWAY LOOP IN DEMO-WEB CONSUMED ALL CPU TIME, SO HEALTH CHECKS "
     "TIMED OUT AND THE SUPERVISOR RESTARTED THE UNIT. MEMORY AND DISK "
     "ARE NOT INVOLVED.";
   s->action_state   = "WAITING";
-  s->action_service = "demo-web";
-  s->action_result  = "HOLD BOOT 2S TO RESTART";
+  s->action_service = "cpu-burner";
+  s->action_result  = "HOLD BOOT 2S TO KILL";
   s->clock          = "12:34:56";
   s->uptime         = "UP 3D 02:03  SSH OK";
 
@@ -343,22 +393,180 @@ static void demo_state(velaops_ui_state_t *s)
 static char g_llm_text[384] = "正在采集，等待 AI 诊断";
 static char g_root_cause[96];
 
+static velaops_health_cfg_t g_hcfg;
+static velaops_health_result_t g_hres;
+static int g_hcfg_loaded;
+static char g_base_ports[240];
+static char g_ignore_ports[96];
+static char g_ignore_units[160];
+static char g_kill_allow[96] = "cpu-burner";
+
+static float conf_float(const char *key, float def)
+{
+  char value[16];
+
+  return velaops_conf_get(key, value, sizeof(value)) == 0 ?
+         (float)atof(value) : def;
+}
+
+static void health_cfg_load(void)
+{
+  char value[8];
+
+  velaops_health_defaults(&g_hcfg);
+
+  g_hcfg.cpu_w = conf_float("thr_cpu", g_hcfg.cpu_w);
+  g_hcfg.cpu_c = g_hcfg.cpu_w + 10.0f;
+  g_hcfg.mem_w = conf_float("thr_mem", g_hcfg.mem_w);
+  g_hcfg.mem_c = g_hcfg.mem_w + 7.0f;
+  g_hcfg.disk_w = conf_float("thr_disk", g_hcfg.disk_w);
+  g_hcfg.disk_c = g_hcfg.disk_w + 7.0f;
+  g_hcfg.inode_w = conf_float("thr_inode", g_hcfg.inode_w);
+  g_hcfg.inode_c = g_hcfg.inode_w + 7.0f;
+  g_hcfg.temp_w = conf_float("thr_temp", g_hcfg.temp_w);
+  g_hcfg.temp_c = g_hcfg.temp_w + 10.0f;
+
+  if (velaops_conf_get("alert_score", value, sizeof(value)) == 0)
+    {
+      g_hcfg.alert_score = atoi(value);
+    }
+
+  if (velaops_conf_get("recover_score", value, sizeof(value)) == 0)
+    {
+      g_hcfg.recover_score = atoi(value);
+    }
+
+  if (velaops_conf_get("ignore_ports", g_ignore_ports,
+                       sizeof(g_ignore_ports)) < 0)
+    {
+      g_ignore_ports[0] = '\0';
+    }
+
+  if (velaops_conf_get("ignore_units", g_ignore_units,
+                       sizeof(g_ignore_units)) < 0)
+    {
+      g_ignore_units[0] = '\0';
+    }
+
+  if (velaops_conf_get("kill_allow", g_kill_allow,
+                       sizeof(g_kill_allow)) < 0)
+    {
+      strlcpy(g_kill_allow, "cpu-burner", sizeof(g_kill_allow));
+    }
+
+  if (velaops_conf_get("base_ports", g_base_ports,
+                       sizeof(g_base_ports)) < 0)
+    {
+      g_base_ports[0] = '\0';
+    }
+
+  g_hcfg_loaded = 1;
+}
+
+static void baseline_learn(const velaops_snapshot_t *snap)
+{
+  char csv[240];
+  size_t used = 0;
+  int i;
+
+  for (i = 0; i < snap->port_count; i++)
+    {
+      int port = atoi(snap->ports[i]);
+      size_t len = strlen(snap->ports[i]);
+
+      if (port <= 0 || port >= 32768 || used + len + 2 >= sizeof(csv))
+        {
+          continue;
+        }
+
+      if (used > 0)
+        {
+          csv[used++] = ',';
+        }
+
+      memcpy(csv + used, snap->ports[i], len);
+      used += len;
+    }
+
+  csv[used] = '\0';
+
+  if (velaops_conf_set("base_ports", csv) == 0)
+    {
+      strlcpy(g_base_ports, csv, sizeof(g_base_ports));
+      printf("velaops: baseline learned ports=%d%c", snap->port_count, 10);
+    }
+}
+
 static void apply_snapshot(velaops_ui_state_t *s,
                            const velaops_snapshot_t *snap,
                            const char *host)
 {
+  int i;
+
+  if (snap->online && g_base_ports[0] == '\0' && snap->port_count > 0)
+    {
+      baseline_learn(snap);
+    }
+
+  velaops_health_score(snap, &g_hcfg, g_base_ports, g_ignore_ports,
+                       g_ignore_units, &g_hres);
+
   s->host           = host;
   s->online         = snap->online;
   s->cpu            = snap->cpu;
   s->mem            = snap->mem;
   s->disk           = snap->disk;
   s->load1          = snap->load1;
-  s->services_total = snap->services_total;
-  s->services_ok    = snap->services_ok;
-  s->ports_total    = snap->ports_total;
-  s->ports_ok       = snap->ports_ok;
+  s->swap           = snap->swap;
+  s->inode          = snap->inode;
+  s->temp           = snap->temp;
+  s->cores          = snap->cores;
+  s->zombies        = snap->zombies;
+
+  s->services_total = snap->watch_total;
+  s->services_ok    = snap->watch_ok;
+  s->ports_total    = snap->ports_watch_total;
+  s->ports_ok       = snap->ports_watch_ok;
+
+  s->score          = g_hres.total;
+  s->s_avail        = g_hres.s_avail;
+  s->s_res          = g_hres.s_res;
+  s->s_svc          = g_hres.s_svc;
+  s->s_net          = g_hres.s_net;
+  s->s_stab         = g_hres.s_stab;
+  s->health_critical = g_hres.critical;
+
+  s->svc_failed     = snap->svc_failed;
+  s->svc_active_units = snap->svc_active;
+  s->svc_failed0[0] = '\0';
+  s->svc_failed1[0] = '\0';
+  s->svc_failed2[0] = '\0';
+
+  for (i = 0; i < snap->svc_failed && i < 3; i++)
+    {
+      char *dst = i == 0 ? s->svc_failed0 :
+                  (i == 1 ? s->svc_failed1 : s->svc_failed2);
+
+      strlcpy(dst, snap->failed[i], 24);
+    }
+
+  s->port_count     = snap->port_count;
+  s->port_new       = g_hres.port_new;
+  s->port_lost      = g_hres.port_lost;
+  s->estab          = snap->estab;
+  s->tw             = snap->tw;
+  s->nic_err        = snap->nic_err;
+  s->nic_drop       = snap->nic_drop;
+
+  s->top_pid        = snap->top_pid;
+  s->top_cpu        = snap->top_cpu;
+  strlcpy(s->top_name, snap->top_name, sizeof(s->top_name));
+
+  s->alert_reason   = g_hres.reason;
   s->uptime         = snap->uptime;
   s->clock          = snap->clock;
+
+  s->alerts = snap->online ? (g_hres.total < g_hcfg.alert_score) : 1;
 
   if (snap->cpu >= 0.0f)
     {
@@ -375,13 +583,6 @@ static void apply_snapshot(velaops_ui_state_t *s,
         }
     }
 
-  s->alerts = (snap->cpu >= 90.0f || snap->mem >= 90.0f ||
-               snap->disk >= 92.0f ||
-               (snap->services_total > 0 &&
-                snap->services_ok < snap->services_total) ||
-               (snap->ports_total > 0 && snap->ports_ok < snap->ports_total))
-              ? 1 : 0;
-
   if (!snap->online)
     {
       s->summary = NULL;
@@ -389,26 +590,27 @@ static void apply_snapshot(velaops_ui_state_t *s,
       return;
     }
 
-  if (snap->services_total > 0 && snap->services_ok < snap->services_total)
+  if (snap->top_name[0] != '\0' && snap->top_cpu >= 20.0f)
     {
       snprintf(g_root_cause, sizeof(g_root_cause),
-               "服务异常 %d/%d，端口 %d/%d",
-               snap->services_ok, snap->services_total,
-               snap->ports_ok, snap->ports_total);
-    }
-  else if (snap->ports_total > 0 && snap->ports_ok < snap->ports_total)
-    {
-      snprintf(g_root_cause, sizeof(g_root_cause),
-               "端口未监听 %d/%d", snap->ports_ok, snap->ports_total);
+               "健康分 %d：%s；TOP 进程 %s 占用 %.0f%%",
+               g_hres.total, g_hres.reason, snap->top_name,
+               (double)snap->top_cpu);
     }
   else
     {
-      strlcpy(g_root_cause, "指标正常，未发现故障根因",
-              sizeof(g_root_cause));
+      snprintf(g_root_cause, sizeof(g_root_cause),
+               "健康分 %d：%s", g_hres.total, g_hres.reason);
     }
 
   s->root_cause = g_root_cause;
   s->summary = g_llm_text;
+}
+
+static int kill_allowed(void)
+{
+  return g_hres.kill_suggest &&
+         velaops_health_csv_has(g_kill_allow, g_hres.kill_name);
 }
 
 static int csv_find_index(const char *csv, const char *item, size_t len)
@@ -453,8 +655,8 @@ static int pick_repair_target(const char *svcs, const char *repair,
       size_t n = comma != NULL ? (size_t)(comma - p) : strlen(p);
       int index = csv_find_index(svcs, p, n);
 
-      if (index >= 0 && index < snap->svc_count &&
-          !snap->svc_active[index])
+      if (index >= 0 && index < snap->watch_count &&
+          !snap->watch_active[index])
         {
           if (n >= size)
             {
@@ -892,6 +1094,7 @@ int main(int argc, FAR char *argv[])
 
   velaops_ssh_prealloc();
   velaops_llm_prealloc();
+  health_cfg_load();
 
   if (strcmp(argv[1], "provision") == 0)
     {
@@ -1162,6 +1365,10 @@ int main(int argc, FAR char *argv[])
       return EXIT_FAILURE;
     }
 
+  g_stop = 0;
+  signal(SIGTERM, stop_handler);
+  signal(SIGINT, stop_handler);
+
   printf("velaops: lcd %ux%u fmt=%d\n", vi.xres, vi.yres, vi.fmt);
   demo_state(&state);
 
@@ -1267,12 +1474,13 @@ online_ok:
       const char *svcs;
       const char *ports;
       const char *target;
+      int is_kill;
       int idx;
 
       if (argc < 9)
         {
           printf("velaops: approve <host> <port> <user> <pass> "
-                 "<services> <ports> <target>\n");
+                 "<services> <ports> <target|kill:name>\n");
           free(fb);
           close(fd);
           return EXIT_FAILURE;
@@ -1281,17 +1489,31 @@ online_ok:
       svcs   = argv[6];
       ports  = argv[7];
       target = argv[8];
+      is_kill = (strncmp(target, "kill:", 5) == 0);
 
-      idx = csv_find_index(svcs, target, strlen(target));
-      if (idx < 0)
+      board_hwtest_gpio_init();
+      board_hwtest_gpio_write(0, 0);
+      board_hwtest_gpio_write(1, 0);
+
+      if (!is_kill)
         {
-          printf("velaops: target %s is not monitored\n", target);
-          free(fb);
-          close(fd);
-          return EXIT_FAILURE;
-        }
+          idx = csv_find_index(svcs, target, strlen(target));
+          if (idx < 0)
+            {
+              printf("velaops: target %s is not monitored\n", target);
+              free(fb);
+              close(fd);
+              return EXIT_FAILURE;
+            }
 
-      rc = velaops_ssh_restart(argv[2], argv[3], argv[4], argv[5], target);
+          rc = velaops_ssh_restart(argv[2], argv[3], argv[4], argv[5],
+                                   target);
+        }
+      else
+        {
+          rc = velaops_ssh_kill(argv[2], argv[3], argv[4], argv[5],
+                                target + 5);
+        }
 
       if (velaops_ssh_collect(argv[2], argv[3], argv[4], argv[5], svcs,
                               ports, &snap) == 0)
@@ -1299,12 +1521,25 @@ online_ok:
           int fixed;
 
           apply_snapshot(&state, &snap, argv[2]);
-          fixed = idx < snap.svc_count && snap.svc_active[idx];
+
+          if (is_kill)
+            {
+              fixed = strcmp(snap.top_name, target + 5) != 0 ||
+                      snap.top_cpu < 50.0f;
+            }
+          else
+            {
+              idx = csv_find_index(svcs, target, strlen(target));
+              fixed = idx >= 0 && idx < snap.watch_count &&
+                      snap.watch_active[idx];
+            }
 
           state.action_state = (rc == 0 && fixed) ? "DONE" : "FAILED";
           state.action_service = target;
           state.action_result = (rc == 0 && fixed) ?
-                                "RESTARTED AND VERIFIED" : "RESTART FAILED";
+                                (is_kill ? "PROCESS KILLED AND VERIFIED" :
+                                 "RESTARTED AND VERIFIED") :
+                                (is_kill ? "KILL FAILED" : "RESTART FAILED");
         }
       else
         {
@@ -1329,18 +1564,23 @@ online_ok:
       const char *svcs;
       const char *ports;
       const char *repair = "";
-      char alert_text[64];
+      char alert_text[96];
       int run = strcmp(argv[1], "run") == 0;
       int seconds = 0;
       int page = 0;
       int elapsed = 0;
-      int crit_streak = 0;
+      int alert_streak = 0;
+      int fail_streak = 0;
       int alert = 0;
+      int show_alert = 0;
+      int muted = 0;
       int blink = 0;
+      int action_kind = 0;
       int bfd = -1;
       int llm_tick = 0;
       int press_ms = 0;
       int long_fired = 0;
+      uint32_t now;
       int tick;
 
       if (argc < 6)
@@ -1366,6 +1606,10 @@ online_ok:
             {
               seconds = atoi(argv[9]);
             }
+
+          board_hwtest_gpio_init();
+          board_hwtest_gpio_write(0, 0);
+          board_hwtest_gpio_write(1, 0);
         }
 
       bfd = open("/dev/gpio1", O_RDONLY);
@@ -1373,110 +1617,165 @@ online_ok:
       do
         {
           int crit;
-          int have_target;
+          int just_alert = 0;
 
           if (velaops_ssh_collect(host, port, user, pass, svcs, ports,
                                   &snap) == 0)
             {
+              fail_streak = 0;
               apply_snapshot(&state, &snap, host);
-              printf("velaops: %s cpu=%d mem=%d disk=%d svc=%d/%d "
-                     "ports=%d/%d up=%ld%c",
-                     host, (int)(snap.cpu + 0.5f), (int)(snap.mem + 0.5f),
-                     (int)(snap.disk + 0.5f), snap.services_ok,
-                     snap.services_total, snap.ports_ok, snap.ports_total,
-                     (long)snap.uptime, 10);
-
-              if ((llm_tick++ % 6) == 0)
-                {
-                  static char l_url[128];
-                  static char l_model[64];
-                  static char l_key[128];
-                  static char l_prompt[256];
-                  static char l_ans[384];
-
-                  velaops_conf_get("llm_url", l_url, sizeof(l_url));
-                  velaops_conf_get("llm_model", l_model, sizeof(l_model));
-                  velaops_conf_get("llm_key", l_key, sizeof(l_key));
-
-                  if (l_key[0] == '\0')
-                    {
-                      printf("velaops: llm skipped (no api key)%c", 10);
-                    }
-                  else
-                    {
-                      snprintf(l_prompt, sizeof(l_prompt),
-                               "服务器 %s CPU %d%% 内存 %d%% 磁盘 %d%%，"
-                               "服务正常 %d/%d，端口监听 %d/%d。"
-                               "用一句中文给出最重要的运维建议。",
-                               host, (int)(snap.cpu + 0.5f),
-                               (int)(snap.mem + 0.5f),
-                               (int)(snap.disk + 0.5f), snap.services_ok,
-                               snap.services_total, snap.ports_ok,
-                               snap.ports_total);
-
-                      if (velaops_llm_chat(l_url, l_model, l_key, l_prompt,
-                                           l_ans, sizeof(l_ans)) == 0)
-                        {
-                          printf("velaops: llm ok: %s%c", l_ans, 10);
-                          strlcpy(g_llm_text, l_ans, sizeof(g_llm_text));
-                          state.summary = g_llm_text;
-                        }
-                      else
-                        {
-                          printf("velaops: llm call failed%c", 10);
-                        }
-                    }
-                }
+              printf("velaops: %s score=%d%s cpu=%d mem=%d disk=%d "
+                     "fail=%d ports=%d top=%s/%d%%%c",
+                     host, g_hres.total, g_hres.critical ? " CRIT" : "",
+                     (int)(snap.cpu + 0.5f), (int)(snap.mem + 0.5f),
+                     (int)(snap.disk + 0.5f), snap.svc_failed,
+                     snap.port_count, snap.top_name,
+                     (int)(snap.top_cpu + 0.5f), 10);
             }
           else
             {
-              printf("velaops: collect failed for %s%c", host, 10);
-              state.online = 0;
+              fail_streak++;
+              printf("velaops: collect failed for %s (%d)%c", host,
+                     fail_streak, 10);
+              apply_snapshot(&state, &snap, host);
             }
 
-          have_target = snap.online ?
-                        pick_repair_target(svcs, repair, &snap, target,
-                                           sizeof(target)) : 0;
-
-          crit = (snap.online &&
-                  (snap.cpu >= 90.0f || snap.mem >= 90.0f ||
-                   snap.disk >= 92.0f ||
-                   (snap.services_total > 0 &&
-                    snap.services_ok < snap.services_total) ||
-                   (snap.ports_total > 0 &&
-                    snap.ports_ok < snap.ports_total)));
+          crit = snap.online ?
+                 (g_hres.critical ||
+                  g_hres.total < g_hcfg.alert_score) :
+                 (fail_streak >= 3);
 
           if (crit)
             {
-              crit_streak++;
+              alert_streak++;
             }
           else
             {
-              crit_streak = 0;
+              alert_streak = 0;
+            }
 
-              if (state.action_state != NULL &&
-                  strcmp(state.action_state, "DONE") == 0)
+          if (!alert &&
+              ((crit && (!snap.online || g_hres.critical)) ||
+               alert_streak >= 2))
+            {
+              alert = 1;
+              show_alert = 1;
+              muted = 0;
+              just_alert = 1;
+              printf("velaops: alert score=%d crit=%d reason=%s%c",
+                     g_hres.total, g_hres.critical, g_hres.reason, 10);
+            }
+
+          if (alert && g_hres.total >= g_hcfg.recover_score &&
+              !g_hres.critical)
+            {
+              alert = 0;
+              show_alert = 0;
+              muted = 0;
+              printf("velaops: health recovered score=%d%c",
+                     g_hres.total, 10);
+            }
+
+          target[0] = '\0';
+          action_kind = 0;
+
+          if (snap.online)
+            {
+              if (pick_repair_target(svcs, repair, &snap, target,
+                                     sizeof(target)))
                 {
-                  alert = 0;
+                  action_kind = 1;
+                }
+              else if (kill_allowed())
+                {
+                  strlcpy(target, g_hres.kill_name, sizeof(target));
+                  action_kind = 2;
                 }
             }
 
-          if (crit_streak >= 2 && !alert)
+          if (alert)
             {
-              alert = 1;
               snprintf(alert_text, sizeof(alert_text),
-                       "CPU %d%% MEM %d%% DISK %d%% SVC %d/%d",
-                       (int)(snap.cpu + 0.5f), (int)(snap.mem + 0.5f),
-                       (int)(snap.disk + 0.5f), snap.services_ok,
-                       snap.services_total);
+                       "%s 健康分 %d", g_hres.reason, g_hres.total);
+            }
 
+          if (just_alert)
+            {
               state.action_state = "WAITING";
-              state.action_service = have_target ? target : "-";
-              state.action_result = have_target ? "HOLD BOOT 2S" :
-                                    "NO REPAIR TARGET";
+              state.action_service = target[0] != '\0' ? target : "-";
+              state.action_result = action_kind == 2 ?
+                                    "HOLD BOOT 2S KILL" :
+                                    (action_kind == 1 ?
+                                     "HOLD BOOT 2S RESTART" :
+                                     "NO ALLOWED ACTION");
 
-              printf("velaops: alert, target=%s\n",
-                     have_target ? target : "none");
+              printf("velaops: alert target=%s kind=%d\n",
+                     target[0] != '\0' ? target : "none", action_kind);
+            }
+
+          if ((just_alert || llm_tick <= 0) && snap.online)
+            {
+              static char l_url[128];
+              static char l_model[64];
+              static char l_key[128];
+              static char l_prompt[320];
+              static char l_ans[384];
+
+              velaops_conf_get("llm_url", l_url, sizeof(l_url));
+              velaops_conf_get("llm_model", l_model, sizeof(l_model));
+              velaops_conf_get("llm_key", l_key, sizeof(l_key));
+
+              llm_tick = 6;
+
+              if (l_key[0] == '\0')
+                {
+                  printf("velaops: llm skipped (no api key)%c", 10);
+                }
+              else
+                {
+                  if (run)
+                    {
+                      board_hwtest_gpio_write(1, 0);
+                    }
+
+                  snprintf(l_prompt, sizeof(l_prompt),
+                           "服务器 %s 健康分 %d/100，CPU %d%% 内存 %d%% "
+                           "磁盘 %d%%，失败单元 %d 个，监听端口 %d 个。"
+                           "主要问题：%s。TOP 进程 %s 占用 %.0f%%。"
+                           "用一句中文给出最重要的运维建议。",
+                           host, g_hres.total, (int)(snap.cpu + 0.5f),
+                           (int)(snap.mem + 0.5f), (int)(snap.disk + 0.5f),
+                           snap.svc_failed, snap.port_count, g_hres.reason,
+                           snap.top_name, (double)snap.top_cpu);
+
+                  if (velaops_llm_chat(l_url, l_model, l_key, l_prompt,
+                                       l_ans, sizeof(l_ans)) == 0)
+                    {
+                      printf("velaops: llm ok: %s%c", l_ans, 10);
+                      strlcpy(g_llm_text, l_ans, sizeof(g_llm_text));
+                      state.summary = g_llm_text;
+                    }
+                  else
+                    {
+                      printf("velaops: llm call failed%c", 10);
+                    }
+                }
+            }
+
+          if (llm_tick > 0)
+            {
+              llm_tick--;
+            }
+
+          now = hw_ms();
+
+          if (run)
+            {
+              bool beep = alert && !muted && ((now / 250) & 1) == 0;
+
+              board_hwtest_gpio_write(1, beep);
+              board_hwtest_gpio_write(0, alert && !muted &&
+                                      ((now / 250) & 1));
             }
 
           if (!run)
@@ -1486,7 +1785,7 @@ online_ok:
               break;
             }
 
-          if (alert)
+          if (alert && show_alert)
             {
               velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
                                       alert_text, blink & 1);
@@ -1502,6 +1801,11 @@ online_ok:
             {
               bool pressed = false;
 
+              if (g_stop)
+                {
+                  break;
+                }
+
               if (bfd >= 0)
                 {
                   ioctl(bfd, GPIOC_READ, (unsigned long)(uintptr_t)&pressed);
@@ -1515,51 +1819,89 @@ online_ok:
                     {
                       long_fired = 1;
 
-                      if (have_target && state.action_state != NULL &&
+                      if (alert && action_kind != 0 &&
+                          state.action_state != NULL &&
                           strcmp(state.action_state, "WAITING") == 0)
                         {
+                          int fixed = 0;
                           int idx;
-                          int fixed;
 
-                          printf("velaops: approved restart %s\n", target);
+                          printf("velaops: approved %s %s\n",
+                                 action_kind == 2 ? "kill" : "restart",
+                                 target);
 
                           state.action_state = "RUNNING";
                           state.action_result = target;
                           velaops_ui_render(fb, vi.xres, vi.yres, &state, 5);
                           lcd_flush(fd, &vi, fb);
+                          board_hwtest_gpio_write(1, 0);
 
-                          rc = velaops_ssh_restart(host, port, user, pass,
-                                                   target);
-                          state.action_result = rc == 0 ?
-                                                "RESTART OK" : "RESTART FAIL";
+                          if (action_kind == 2)
+                            {
+                              rc = velaops_ssh_kill(host, port, user, pass,
+                                                    target);
+                            }
+                          else
+                            {
+                              rc = velaops_ssh_restart(host, port, user, pass,
+                                                       target);
+                            }
 
                           if (velaops_ssh_collect(host, port, user, pass,
                                                   svcs, ports, &snap) == 0)
                             {
                               apply_snapshot(&state, &snap, host);
 
-                              idx = csv_find_index(svcs, target,
-                                                   strlen(target));
-                              fixed = idx >= 0 && idx < snap.svc_count &&
-                                      snap.svc_active[idx];
+                              if (action_kind == 2)
+                                {
+                                  fixed =
+                                    strcmp(snap.top_name, target) != 0 ||
+                                    snap.top_cpu < 50.0f;
+                                }
+                              else
+                                {
+                                  idx = csv_find_index(svcs, target,
+                                                       strlen(target));
+                                  fixed = idx >= 0 &&
+                                          idx < snap.watch_count &&
+                                          snap.watch_active[idx];
+                                }
 
                               if (rc == 0 && fixed)
                                 {
                                   state.action_state = "DONE";
-                                  state.action_result =
+                                  state.action_result = action_kind == 2 ?
+                                    "KILLED AND VERIFIED" :
                                     "RESTARTED AND VERIFIED";
                                   alert = 0;
+                                  show_alert = 0;
+                                  muted = 0;
+                                  alert_streak = 0;
                                 }
                               else
                                 {
                                   state.action_state = "FAILED";
+                                  state.action_result = action_kind == 2 ?
+                                    "KILL FAILED" : "RESTART FAILED";
                                 }
+                            }
+                          else
+                            {
+                              state.action_state = "FAILED";
+                              state.action_result = "VERIFY COLLECT FAILED";
                             }
 
                           page = 5;
                           velaops_ui_render(fb, vi.xres, vi.yres, &state,
                                             page);
                           lcd_flush(fd, &vi, fb);
+                          printf("velaops: action %s state=%s\n",
+                                 target, state.action_state);
+                        }
+                      else if (alert)
+                        {
+                          show_alert = 0;
+                          muted = 1;
                         }
                     }
                 }
@@ -1567,9 +1909,10 @@ online_ok:
                 {
                   if (press_ms > 0 && press_ms < 1000)
                     {
-                      if (alert)
+                      if (show_alert)
                         {
-                          alert = 0;
+                          show_alert = 0;
+                          muted = 1;
                         }
                       else
                         {
@@ -1584,7 +1927,18 @@ online_ok:
                   long_fired = 0;
                 }
 
-              if (alert && (tick % 5) == 4)
+              now = hw_ms();
+
+              if (run)
+                {
+                  bool beep = alert && !muted && ((now / 250) & 1) == 0;
+
+                  board_hwtest_gpio_write(1, beep);
+                  board_hwtest_gpio_write(0, alert && !muted &&
+                                          ((now / 250) & 1));
+                }
+
+              if (alert && show_alert && (tick % 5) == 4)
                 {
                   blink++;
                   velaops_ui_render_alert(fb, vi.xres, vi.yres, "告警",
@@ -1597,7 +1951,13 @@ online_ok:
 
           elapsed += 5;
         }
-      while (seconds <= 0 || elapsed < seconds);
+      while (!g_stop && (seconds <= 0 || elapsed < seconds));
+
+      if (run)
+        {
+          board_hwtest_gpio_write(1, 0);
+          board_hwtest_gpio_write(0, 0);
+        }
 
       if (bfd >= 0)
         {

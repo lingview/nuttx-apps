@@ -423,18 +423,23 @@ static const char *overall_word(const velaops_ui_state_t *s, uint16_t *color)
       return "无数据";
     }
 
-  if (s->cpu >= 90.0f || s->mem >= 90.0f || s->disk >= 92.0f ||
-      (s->services_total > 0 && s->services_ok < s->services_total) ||
-      (s->ports_total > 0 && s->ports_ok < s->ports_total))
+  if (s->health_critical || s->score < 60)
     {
       *color = COL_RED;
       return "严重";
     }
 
-  if (s->cpu >= 75.0f || s->mem >= 75.0f || s->disk >= 80.0f)
+  if (s->score < 70)
+    {
+      *color = COL_RED;
+      return "告警";
+    }
+
+  if (s->score < 85 || s->cpu >= 75.0f || s->mem >= 75.0f ||
+      s->disk >= 80.0f)
     {
       *color = COL_AMBER;
-      return "警告";
+      return "注意";
     }
 
   *color = COL_GREEN;
@@ -497,37 +502,68 @@ static void draw_metric_card(uint16_t *fb, int w, int h, int x, int y,
 static void draw_overview(uint16_t *fb, int w, int h,
                           const velaops_ui_state_t *s)
 {
+  static const char *const labels[5] =
+  {
+    "可用", "资源", "服务", "网络", "稳定"
+  };
+
+  char lines[2][TEXT_LINE_MAX];
   char buf[64];
+  int values[5];
+  uint16_t color;
+  int i;
+  int count;
 
-  draw_text(fb, w, h, 10, 36, "主机", 2, COL_DIM);
-  draw_text(fb, w, h, 46, 36, s->host != NULL ? s->host : "-", 2, COL_TEXT);
-  draw_text_right(fb, w, h, w - 10, 36,
-                  s->online ? "在线" : "离线", 2,
-                  s->online ? COL_GREEN : COL_RED);
+  values[0] = s->s_avail;
+  values[1] = s->s_res;
+  values[2] = s->s_svc;
+  values[3] = s->s_net;
+  values[4] = s->s_stab;
 
-  draw_metric_card(fb, w, h, 8, 58, "CPU", s->cpu);
-  draw_metric_card(fb, w, h, 112, 58, "MEM", s->mem);
-  draw_metric_card(fb, w, h, 216, 58, "DISK", s->disk);
+  color = s->health_critical ? COL_RED :
+          (s->score < 70 ? COL_AMBER : COL_GREEN);
 
-  snprintf(buf, sizeof(buf), "服务 %d/%d 正常", s->services_ok,
-           s->services_total);
-  draw_text(fb, w, h, 10, 150, buf, 2,
-            (s->services_total > 0 && s->services_ok == s->services_total)
-            ? COL_GREEN : COL_AMBER);
+  draw_text(fb, w, h, 10, 36, "健康分", 2, COL_DIM);
 
-  snprintf(buf, sizeof(buf), "端口 %d/%d 可达", s->ports_ok, s->ports_total);
-  draw_text_right(fb, w, h, w - 10, 150, buf, 2,
-                  (s->ports_total > 0 && s->ports_ok == s->ports_total)
-                  ? COL_GREEN : COL_AMBER);
+  snprintf(buf, sizeof(buf), "%d", s->score);
+  draw_text(fb, w, h, 10, 54, buf, 4, color);
 
-  fill_rect(fb, w, h, 8, 172, w - 16, 1, COL_BORDER);
+  snprintf(buf, sizeof(buf), "%s", s->host != NULL ? s->host : "-");
+  draw_text(fb, w, h, 10, 92, buf, 1, COL_DIM);
 
-  snprintf(buf, sizeof(buf), "告警 %d", s->alerts);
-  draw_text(fb, w, h, 10, 178, buf, 2, s->alerts > 0 ? COL_RED : COL_DIM);
-
-  if (s->uptime != NULL)
+  for (i = 0; i < 5; i++)
     {
-      draw_text(fb, w, h, 10, 203, s->uptime, 2, COL_DIM);
+      int y = 38 + i * 22;
+
+      draw_text(fb, w, h, 116, y, labels[i], 1, COL_DIM);
+      draw_bar(fb, w, h, 160, y + 2, w - 170,
+               (float)values[i], values[i] >= 80 ? COL_GREEN :
+               (values[i] >= 60 ? COL_AMBER : COL_RED));
+      snprintf(buf, sizeof(buf), "%d", values[i]);
+      draw_text_right(fb, w, h, w - 8, y, buf, 1, COL_TEXT);
+    }
+
+  fill_rect(fb, w, h, 8, 152, w - 16, 1, COL_BORDER);
+
+  draw_text(fb, w, h, 10, 158, "主要问题", 1, COL_DIM);
+
+  count = wrap_text(s->alert_reason != NULL ? s->alert_reason : "-",
+                    lines, 2, w - 20);
+  for (i = 0; i < count; i++)
+    {
+      draw_text(fb, w, h, 10, 172 + i * 18, lines[i], 2,
+                s->health_critical ? COL_RED : COL_TEXT);
+    }
+
+  if (s->top_name[0] != '\0' && s->top_cpu > 0.5f)
+    {
+      snprintf(buf, sizeof(buf), "TOP %s %d%%", s->top_name,
+               (int)(s->top_cpu + 0.5f));
+      draw_text(fb, w, h, 10, 210, buf, 1, COL_DIM);
+    }
+  else if (s->uptime != NULL)
+    {
+      draw_text(fb, w, h, 10, 210, s->uptime, 1, COL_DIM);
     }
 }
 
@@ -578,70 +614,98 @@ static void draw_sparkline(uint16_t *fb, int w, int h, int x, int y,
     }
 }
 
+static void draw_metric_pair(uint16_t *fb, int w, int h, int x, int y,
+                             const char *label, float value)
+{
+  char buf[24];
+
+  draw_text(fb, w, h, x, y, label, 1, COL_DIM);
+
+  if (value >= 0.0f)
+    {
+      snprintf(buf, sizeof(buf), "%d%%", (int)(value + 0.5f));
+      draw_text_right(fb, w, h, x + 140, y, buf, 1, level_color(value));
+    }
+
+  draw_bar(fb, w, h, x, y + 14, 140, value < 0.0f ? 0.0f : value,
+           level_color(value < 0.0f ? 0.0f : value));
+}
+
 static void draw_performance(uint16_t *fb, int w, int h,
                              const velaops_ui_state_t *s)
 {
-  char buf[32];
+  char buf[40];
 
-  draw_text(fb, w, h, 10, 36, "CPU 历史", 2, COL_DIM);
-  draw_sparkline(fb, w, h, 10, 56, w - 20, 78,
+  draw_text(fb, w, h, 10, 36, "CPU 历史", 1, COL_DIM);
+  draw_sparkline(fb, w, h, 10, 52, w - 20, 66,
                  s->cpu_hist, s->cpu_hist_len);
 
-  draw_text(fb, w, h, 10, 136, "内存", 2, COL_DIM);
-  if (s->mem >= 0.0f)
-    {
-      snprintf(buf, sizeof(buf), "%d%%", (int)(s->mem + 0.5f));
-      draw_text_right(fb, w, h, w - 10, 136, buf, 2, level_color(s->mem));
-    }
+  draw_metric_pair(fb, w, h, 10, 126, "内存", s->mem);
+  draw_metric_pair(fb, w, h, 170, 126, "磁盘", s->disk);
+  draw_metric_pair(fb, w, h, 10, 158, "SWAP", s->swap);
+  draw_metric_pair(fb, w, h, 170, 158, "INODE", s->inode);
 
-  draw_bar(fb, w, h, 10, 158, w - 20, s->mem, level_color(s->mem));
+  snprintf(buf, sizeof(buf), "CPU %d%%  负载 %.2f  核 %d",
+           (int)(s->cpu + 0.5f), (double)s->load1, s->cores);
+  draw_text(fb, w, h, 10, 194, buf, 1, COL_TEXT);
 
-  draw_text(fb, w, h, 10, 172, "磁盘", 2, COL_DIM);
-  if (s->disk >= 0.0f)
-    {
-      snprintf(buf, sizeof(buf), "%d%%", (int)(s->disk + 0.5f));
-      draw_text_right(fb, w, h, w - 10, 172, buf, 2, level_color(s->disk));
-    }
-
-  draw_bar(fb, w, h, 10, 192, w - 20, s->disk, level_color(s->disk));
-
-  if (s->load1 >= 0.0f)
-    {
-      snprintf(buf, sizeof(buf), "负载 %.2f", (double)s->load1);
-      draw_text(fb, w, h, 10, 206, buf, 1, COL_DIM);
-    }
+  snprintf(buf, sizeof(buf), "温度 %.1fC  僵尸 %d  NTP", (double)s->temp,
+           s->zombies);
+  draw_text(fb, w, h, 10, 208, buf, 1, COL_DIM);
 }
 
 static void draw_ops(uint16_t *fb, int w, int h,
                      const velaops_ui_state_t *s)
 {
   char buf[48];
+  int y = 64;
   int i;
-  int y = 52;
 
-  draw_text(fb, w, h, 10, 36, "服务", 2, COL_DIM);
-  draw_text_right(fb, w, h, w - 10, 36, "状态", 2, COL_DIM);
-  fill_rect(fb, w, h, 8, 50, w - 16, 1, COL_BORDER);
+  draw_text(fb, w, h, 10, 36, "服务与单元", 2, COL_DIM);
+  fill_rect(fb, w, h, 8, 56, w - 16, 1, COL_BORDER);
 
-  for (i = 0; i < s->services_total && i < 6; i++)
+  if (s->svc_failed > 0)
     {
-      int ok = i < s->services_ok;
+      const char *names[3] =
+      {
+        s->svc_failed0, s->svc_failed1, s->svc_failed2
+      };
 
-      snprintf(buf, sizeof(buf), "服务-%d", i + 1);
-      draw_text(fb, w, h, 12, y, buf, 2, COL_TEXT);
-      draw_text_right(fb, w, h, w - 12, y, ok ? "运行中" : "失败", 2,
-                      ok ? COL_GREEN : COL_RED);
-      y += 20;
+      for (i = 0; i < s->svc_failed && i < 3; i++)
+        {
+          if (names[i][0] == '\0')
+            {
+              break;
+            }
+
+          draw_text(fb, w, h, 12, y, names[i], 2, COL_TEXT);
+          draw_text_right(fb, w, h, w - 12, y, "失败", 2, COL_RED);
+          y += 22;
+        }
+    }
+  else
+    {
+      draw_text(fb, w, h, 12, y, "所有 systemd 单元正常", 2, COL_GREEN);
+      y += 26;
     }
 
-  y += 6;
-  fill_rect(fb, w, h, 8, y, w - 16, 1, COL_BORDER);
-  y += 8;
+  fill_rect(fb, w, h, 8, 150, w - 16, 1, COL_BORDER);
 
-  snprintf(buf, sizeof(buf), "端口可达 %d/%d", s->ports_ok, s->ports_total);
-  draw_text(fb, w, h, 10, y, buf, 2,
-            (s->ports_total > 0 && s->ports_ok == s->ports_total)
-            ? COL_GREEN : COL_AMBER);
+  snprintf(buf, sizeof(buf), "活动单元 %d  失败 %d", s->svc_active_units,
+           s->svc_failed);
+  draw_text(fb, w, h, 10, 162, buf, 2, COL_TEXT);
+
+  if (s->services_total > 0)
+    {
+      snprintf(buf, sizeof(buf), "重点服务 %d/%d 正常", s->services_ok,
+               s->services_total);
+      draw_text(fb, w, h, 10, 190, buf, 1, COL_DIM);
+    }
+  else
+    {
+      draw_text(fb, w, h, 10, 190, "未配置重点服务（全量监控）", 1,
+                COL_DIM);
+    }
 }
 
 static void draw_text_page(uint16_t *fb, int w, int h, const char *title,
@@ -666,16 +730,65 @@ static void draw_summary(uint16_t *fb, int w, int h,
 {
   char buf[64];
 
-  draw_text_page(fb, w, h, "诊断摘要", s->summary, COL_CYAN);
+  draw_text_page(fb, w, h, "AI 诊断", s->summary, COL_CYAN);
 
-  snprintf(buf, sizeof(buf), "模型 MIMO  告警 %d", s->alerts);
+  snprintf(buf, sizeof(buf), "健康分 %d  告警 %d  模型 MIMO", s->score,
+           s->alerts);
   draw_text(fb, w, h, 10, 214, buf, 1, COL_DIM);
 }
 
 static void draw_rootcause(uint16_t *fb, int w, int h,
                            const velaops_ui_state_t *s)
 {
-  draw_text_page(fb, w, h, "根因", s->root_cause, COL_AMBER);
+  char buf[64];
+  char lines[3][TEXT_LINE_MAX];
+  int count;
+  int i;
+
+  draw_text(fb, w, h, 10, 36, "网络与端口", 2, COL_DIM);
+  fill_rect(fb, w, h, 8, 56, w - 16, 1, COL_BORDER);
+
+  snprintf(buf, sizeof(buf), "监听端口 %d 个", s->port_count);
+  draw_text(fb, w, h, 10, 66, buf, 2, COL_TEXT);
+
+  snprintf(buf, sizeof(buf), "新增 %d", s->port_new);
+  draw_text(fb, w, h, 10, 92, buf, 2,
+            s->port_new > 0 ? COL_AMBER : COL_DIM);
+
+  snprintf(buf, sizeof(buf), "丢失 %d", s->port_lost);
+  draw_text_right(fb, w, h, w - 10, 92, buf, 2,
+                  s->port_lost > 0 ? COL_RED : COL_DIM);
+
+  snprintf(buf, sizeof(buf), "ESTAB %d  TIME_WAIT %d", s->estab, s->tw);
+  draw_text(fb, w, h, 10, 120, buf, 1, COL_DIM);
+
+  snprintf(buf, sizeof(buf), "网卡错误 %lu  丢包 %lu", s->nic_err,
+           s->nic_drop);
+  draw_text(fb, w, h, 10, 136, buf, 1, COL_DIM);
+
+  fill_rect(fb, w, h, 8, 152, w - 16, 1, COL_BORDER);
+
+  if (s->top_name[0] != '\0')
+    {
+      snprintf(buf, sizeof(buf), "TOP 进程 %s (pid %d) %.0f%%", s->top_name,
+               s->top_pid, (double)s->top_cpu);
+    }
+  else
+    {
+      snprintf(buf, sizeof(buf), "TOP 进程 -");
+    }
+
+  count = wrap_text(buf, lines, 2, w - 20);
+  for (i = 0; i < count; i++)
+    {
+      draw_text(fb, w, h, 10, 162 + i * 18, lines[i], 2, COL_TEXT);
+    }
+
+  if (s->port_new > 0 || s->port_lost > 0)
+    {
+      draw_text(fb, w, h, 10, 206, "端口漂移可忽略项请在配置中维护", 1,
+                COL_DIM);
+    }
 }
 
 static void draw_action(uint16_t *fb, int w, int h,
@@ -703,9 +816,9 @@ static void draw_action(uint16_t *fb, int w, int h,
 
   fill_rect(fb, w, h, 8, 132, w - 16, 1, COL_BORDER);
 
-  draw_text(fb, w, h, 10, 140, "仅允许白名单服务", 2, COL_DIM);
+  draw_text(fb, w, h, 10, 140, "仅允许白名单操作", 2, COL_DIM);
   draw_text(fb, w, h, 10, 164, "需按住BOOT 2秒批准", 2, COL_DIM);
-  draw_text(fb, w, h, 10, 188, "修复后重新SSH取证复核", 2, COL_DIM);
+  draw_text(fb, w, h, 10, 188, "服务重启/终止高占用进程", 2, COL_DIM);
 }
 
 static void draw_hwtest(uint16_t *fb, int w, int h,
