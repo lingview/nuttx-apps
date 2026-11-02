@@ -1,0 +1,10 @@
+############################################################################
+# apps/examples/scp_put/Make.defs
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+############################################################################
+
+ifneq ($(CONFIG_EXAMPLES_SCP_PUT),)
+CONFIGURED_APPS += $(APPDIR)/examples/scp_put
+endif

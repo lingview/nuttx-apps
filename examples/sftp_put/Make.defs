@@ -1,0 +1,10 @@
+############################################################################
+# apps/examples/sftp_put/Make.defs
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+############################################################################
+
+ifneq ($(CONFIG_EXAMPLES_SFTP_PUT),)
+CONFIGURED_APPS += $(APPDIR)/examples/sftp_put
+endif

@@ -1,0 +1,28 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config EXAMPLES_SSH_EXEC
+	bool "SSH exec example"
+	default n
+	depends on NETUTILS_LIBSSH2
+	---help---
+		Simple libssh2 client: connect, password auth, exec a command and
+		print its output.
+
+if EXAMPLES_SSH_EXEC
+
+config EXAMPLES_SSH_EXEC_PROGNAME
+	string "Program name"
+	default "ssh_exec"
+
+config EXAMPLES_SSH_EXEC_PRIORITY
+	int "Task priority"
+	default 100
+
+config EXAMPLES_SSH_EXEC_STACKSIZE
+	int "Task stack size"
+	default 24576
+
+endif

@@ -1,0 +1,10 @@
+############################################################################
+# apps/examples/lcdtest/Make.defs
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+############################################################################
+
+ifneq ($(CONFIG_EXAMPLES_LCDTEST),)
+CONFIGURED_APPS += $(APPDIR)/examples/lcdtest
+endif

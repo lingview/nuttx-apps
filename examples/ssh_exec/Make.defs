@@ -1,0 +1,10 @@
+############################################################################
+# apps/examples/ssh_exec/Make.defs
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+############################################################################
+
+ifneq ($(CONFIG_EXAMPLES_SSH_EXEC),)
+CONFIGURED_APPS += $(APPDIR)/examples/ssh_exec
+endif

@@ -1,0 +1,27 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config EXAMPLES_SFTP_PUT
+	bool "SFTP upload example"
+	default n
+	depends on NETUTILS_LIBSSH2
+	---help---
+		Upload a local file to an SSH server using libssh2 SFTP.
+
+if EXAMPLES_SFTP_PUT
+
+config EXAMPLES_SFTP_PUT_PROGNAME
+	string "Program name"
+	default "sftp_put"
+
+config EXAMPLES_SFTP_PUT_PRIORITY
+	int "Task priority"
+	default 100
+
+config EXAMPLES_SFTP_PUT_STACKSIZE
+	int "Task stack size"
+	default 24576
+
+endif
